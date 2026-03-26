@@ -134,7 +134,7 @@ defineExpose({
 }
 
 .custom-marker {
-  background: rgba(64, 158, 255, 0.65);
+  background: rgba(64, 158, 255, 0.4);
   color: white;
   padding: 3px 6px;
   border-radius: 3px;
@@ -151,6 +151,6 @@ defineExpose({
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-top-color: rgba(64, 158, 255, 0.65);
+  border-top-color: rgba(64, 158, 255, 0.4);
 }
 </style>
