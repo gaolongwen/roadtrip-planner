@@ -45,13 +45,14 @@ export const poiApi = {
   },
 
   // 获取地图范围内景点
-  getPoisInBbox(minLng, maxLng, minLat, maxLat) {
+  getPoisInBbox(minLng, maxLng, minLat, maxLat, filters = {}) {
     return api.get('/api/pois/bbox', {
       params: {
         min_lng: minLng,
         max_lng: maxLng,
         min_lat: minLat,
         max_lat: maxLat,
+        ...filters,
       },
     })
   },

@@ -82,6 +82,12 @@ def get_pois(
     
     if min_rating is not None:
         filters.append(POI.rating >= min_rating)
+    
+    # 标签筛选（JSON 字符串模糊匹配）
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",")]
+        for tag in tag_list:
+            filters.append(POI.tags.like(f'%"{tag}"%'))
 
     if filters:
         query = query.filter(and_(*filters))
@@ -96,15 +102,39 @@ def get_pois_by_bbox(
     max_lat: float = Query(..., ge=-90, le=90, description="最大纬度"),
     min_lng: float = Query(..., ge=-180, le=180, description="最小经度"),
     max_lng: float = Query(..., ge=-180, le=180, description="最大经度"),
+    categories: Optional[str] = Query(None, description="多个类别，逗号分隔"),
+    wild_filter: Optional[str] = Query(None, description="野生筛选: 正规,野生"),
+    tags: Optional[str] = Query(None, description="标签筛选，逗号分隔"),
     db: Session = Depends(get_db),
 ):
     """获取地图范围内（bounding box）的景点"""
-    pois = db.query(POI).filter(
+    filters = [
         POI.latitude >= min_lat,
         POI.latitude <= max_lat,
         POI.longitude >= min_lng,
         POI.longitude <= max_lng,
-    ).all()
+    ]
+    
+    # 多类别筛选
+    if categories:
+        category_list = [c.strip() for c in categories.split(",")]
+        filters.append(POI.category.in_(category_list))
+    
+    # 野生景点筛选
+    if wild_filter:
+        wild_values = [v.strip() for v in wild_filter.split(",")]
+        if "正规" in wild_values and "野生" not in wild_values:
+            filters.append(POI.is_wild == False)
+        elif "野生" in wild_values and "正规" not in wild_values:
+            filters.append(POI.is_wild == True)
+    
+    # 标签筛选
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",")]
+        for tag in tag_list:
+            filters.append(POI.tags.like(f'%"{tag}"%'))
+    
+    pois = db.query(POI).filter(and_(*filters)).all()
     return [poi_to_response(p) for p in pois]
 
 

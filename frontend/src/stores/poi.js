@@ -13,22 +13,33 @@ export const usePoiStore = defineStore('poi', () => {
     tags: [],
   })
 
+  // 构建筛选参数
+  function buildFilterParams() {
+    const filterParams = {}
+    
+    // 景点性质筛选（不全选时才传）
+    if (filters.value.nature && filters.value.nature.length > 0 && filters.value.nature.length < 2) {
+      filterParams.wild_filter = filters.value.nature.join(',')
+    }
+    
+    // 类别筛选（不全选时才传）
+    if (filters.value.category && filters.value.category.length > 0 && filters.value.category.length < 2) {
+      filterParams.categories = filters.value.category.join(',')
+    }
+    
+    // 标签筛选（有选择时才传）
+    if (filters.value.tags && filters.value.tags.length > 0) {
+      filterParams.tags = filters.value.tags.join(',')
+    }
+    
+    return filterParams
+  }
+
   // 获取景点列表
   async function fetchPois(params = {}) {
     loading.value = true
     try {
-      const filterParams = {}
-      
-      // 景点性质筛选
-      if (filters.value.nature && filters.value.nature.length > 0 && filters.value.nature.length < 2) {
-        filterParams.wild_filter = filters.value.nature.join(',')
-      }
-      
-      // 类别筛选
-      if (filters.value.category && filters.value.category.length > 0 && filters.value.category.length < 2) {
-        filterParams.categories = filters.value.category.join(',')
-      }
-      
+      const filterParams = buildFilterParams()
       const data = await poiApi.getPois({ ...filterParams, ...params })
       pois.value = data.items || data || []
       return data
@@ -44,7 +55,8 @@ export const usePoiStore = defineStore('poi', () => {
   async function fetchPoisInBbox(minLng, maxLng, minLat, maxLat) {
     loading.value = true
     try {
-      const data = await poiApi.getPoisInBbox(minLng, maxLng, minLat, maxLat)
+      const filterParams = buildFilterParams()
+      const data = await poiApi.getPoisInBbox(minLng, maxLng, minLat, maxLat, filterParams)
       pois.value = data || []
       return data
     } catch (error) {
