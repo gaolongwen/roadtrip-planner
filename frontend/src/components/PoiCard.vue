@@ -12,7 +12,7 @@
     <div class="poi-content">
       <!-- 景点图片 -->
       <div class="poi-image" v-if="poi.images && poi.images.length > 0">
-        <img :src="poi.images[0]" :alt="poi.name" @error="handleImageError" />
+        <img :src="poi.images[0]" :alt="poi.name" referrerpolicy="no-referrer" @error="handleImageError" />
       </div>
       
       <div class="poi-info">
