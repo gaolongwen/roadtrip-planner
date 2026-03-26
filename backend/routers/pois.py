@@ -42,7 +42,10 @@ def get_pois(
     city: Optional[str] = None,
     district: Optional[str] = None,
     category: Optional[str] = None,
+    categories: Optional[str] = Query(None, description="多个类别，逗号分隔，如: 人文,自然"),
     is_wild: Optional[bool] = None,
+    wild_filter: Optional[str] = Query(None, description="野生筛选: 正规,野生 或 all"),
+    tags: Optional[str] = Query(None, description="标签筛选，逗号分隔"),
     min_rating: Optional[float] = Query(None, ge=0, le=5),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -58,10 +61,25 @@ def get_pois(
         filters.append(POI.city == city)
     if district:
         filters.append(POI.district == district)
-    if category:
+    
+    # 多类别筛选
+    if categories:
+        category_list = [c.strip() for c in categories.split(",")]
+        filters.append(POI.category.in_(category_list))
+    elif category:
         filters.append(POI.category == category)
-    if is_wild is not None:
+    
+    # 野生景点筛选（支持多选）
+    if wild_filter:
+        wild_values = [v.strip() for v in wild_filter.split(",")]
+        if "正规" in wild_values and "野生" not in wild_values:
+            filters.append(POI.is_wild == False)
+        elif "野生" in wild_values and "正规" not in wild_values:
+            filters.append(POI.is_wild == True)
+        # 如果两个都有，不添加筛选条件（返回全部）
+    elif is_wild is not None:
         filters.append(POI.is_wild == is_wild)
+    
     if min_rating is not None:
         filters.append(POI.rating >= min_rating)
 

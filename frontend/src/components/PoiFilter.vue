@@ -10,59 +10,38 @@
     </template>
     
     <el-form label-position="top" size="small">
-      <el-form-item label="省份">
-        <el-select 
-          v-model="localFilters.province" 
-          placeholder="选择省份" 
-          clearable
-          @change="onProvinceChange"
-        >
-          <el-option 
-            v-for="province in provinces" 
-            :key="province" 
-            :label="province" 
-            :value="province"
-          />
-        </el-select>
+      <!-- 景点性质 -->
+      <el-form-item label="景点性质">
+        <el-checkbox-group v-model="localFilters.nature">
+          <el-checkbox label="正规">正规景点</el-checkbox>
+          <el-checkbox label="野生">野生景点</el-checkbox>
+        </el-checkbox-group>
       </el-form-item>
       
-      <el-form-item label="城市">
-        <el-select 
-          v-model="localFilters.city" 
-          placeholder="选择城市" 
-          clearable
-          :disabled="!localFilters.province"
-        >
-          <el-option 
-            v-for="city in filteredCities" 
-            :key="city" 
-            :label="city" 
-            :value="city"
-          />
-        </el-select>
+      <!-- 主要看点 -->
+      <el-form-item label="主要看点">
+        <el-checkbox-group v-model="localFilters.category">
+          <el-checkbox label="人文">人文历史</el-checkbox>
+          <el-checkbox label="自然">自然风光</el-checkbox>
+        </el-checkbox-group>
       </el-form-item>
       
-      <el-form-item label="景点类型">
-        <el-select 
-          v-model="localFilters.type" 
-          placeholder="选择类型" 
-          clearable
-        >
-          <el-option 
-            v-for="type in poiTypes" 
-            :key="type" 
-            :label="type" 
-            :value="type"
-          />
-        </el-select>
-      </el-form-item>
-      
-      <el-form-item label="野生景点">
-        <el-switch 
-          v-model="localFilters.isWild"
-          active-text="只看野生"
-          inactive-text="全部"
-        />
+      <!-- 标签筛选 -->
+      <el-form-item label="特色标签">
+        <el-checkbox-group v-model="localFilters.tags">
+          <el-checkbox label="古建">古建</el-checkbox>
+          <el-checkbox label="石窟">石窟</el-checkbox>
+          <el-checkbox label="佛教">佛教</el-checkbox>
+          <el-checkbox label="道教">道教</el-checkbox>
+          <el-checkbox label="长城">长城</el-checkbox>
+          <el-checkbox label="古村">古村</el-checkbox>
+          <el-checkbox label="自然">自然</el-checkbox>
+          <el-checkbox label="世界遗产">世遗</el-checkbox>
+          <el-checkbox label="博物馆">博物馆</el-checkbox>
+          <el-checkbox label="教堂">教堂</el-checkbox>
+          <el-checkbox label="工业遗产">工业</el-checkbox>
+          <el-checkbox label="挂壁公路">挂壁</el-checkbox>
+        </el-checkbox-group>
       </el-form-item>
     </el-form>
     
@@ -73,45 +52,17 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { usePoiStore } from '../stores/poi'
 
 const emit = defineEmits(['filter'])
 const poiStore = usePoiStore()
 
-// 省份数据（河南周边）
-const provinces = ['河南', '陕西', '山西', '河北', '山东', '安徽', '湖北']
-
-// 城市数据
-const cityMap = {
-  '河南': ['郑州', '洛阳', '开封', '安阳', '新乡', '焦作', '南阳', '信阳', '周口', '驻马店'],
-  '陕西': ['西安', '咸阳', '宝鸡', '渭南', '延安', '汉中', '榆林'],
-  '山西': ['太原', '大同', '晋中', '临汾', '运城', '长治'],
-  '河北': ['石家庄', '保定', '邯郸', '邢台', '张家口', '承德'],
-  '山东': ['济南', '青岛', '烟台', '威海', '泰安', '济宁'],
-  '安徽': ['合肥', '芜湖', '蚌埠', '黄山', '安庆'],
-  '湖北': ['武汉', '宜昌', '襄阳', '十堰', '恩施'],
-}
-
-// 景点类型
-const poiTypes = ['自然风光', '历史文化', '主题乐园', '网红打卡', '美食街', '其他']
-
 const localFilters = ref({
-  province: '',
-  city: '',
-  type: '',
-  isWild: false,
+  nature: ['正规', '野生'],  // 默认全选
+  category: ['人文', '自然'], // 默认全选
+  tags: [],
 })
-
-// 过滤后的城市列表
-const filteredCities = computed(() => {
-  return cityMap[localFilters.value.province] || []
-})
-
-// 省份变化时清空城市选择
-const onProvinceChange = () => {
-  localFilters.value.city = ''
-}
 
 // 应用筛选
 const applyFilters = () => {
@@ -122,10 +73,9 @@ const applyFilters = () => {
 // 重置筛选
 const resetFilters = () => {
   localFilters.value = {
-    province: '',
-    city: '',
-    type: '',
-    isWild: false,
+    nature: ['正规', '野生'],
+    category: ['人文', '自然'],
+    tags: [],
   }
   poiStore.resetFilters()
   emit('filter', localFilters.value)
@@ -148,7 +98,13 @@ watch(() => poiStore.filters, (newFilters) => {
   align-items: center;
 }
 
-.el-select {
-  width: 100%;
+.el-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.el-checkbox {
+  margin-right: 0;
 }
 </style>

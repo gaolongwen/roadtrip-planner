@@ -8,22 +8,26 @@ export const usePoiStore = defineStore('poi', () => {
   const selectedPoi = ref(null)
   const loading = ref(false)
   const filters = ref({
-    province: '',
-    city: '',
-    type: '',
-    isWild: false,
+    nature: ['正规', '野生'],
+    category: ['人文', '自然'],
+    tags: [],
   })
 
   // 获取景点列表
   async function fetchPois(params = {}) {
     loading.value = true
     try {
-      // 过滤掉空参数
       const filterParams = {}
-      if (filters.value.province) filterParams.province = filters.value.province
-      if (filters.value.city) filterParams.city = filters.value.city
-      if (filters.value.type) filterParams.category = filters.value.type
-      if (filters.value.isWild) filterParams.is_wild = true
+      
+      // 景点性质筛选
+      if (filters.value.nature && filters.value.nature.length > 0 && filters.value.nature.length < 2) {
+        filterParams.wild_filter = filters.value.nature.join(',')
+      }
+      
+      // 类别筛选
+      if (filters.value.category && filters.value.category.length > 0 && filters.value.category.length < 2) {
+        filterParams.categories = filters.value.category.join(',')
+      }
       
       const data = await poiApi.getPois({ ...filterParams, ...params })
       pois.value = data.items || data || []
@@ -69,10 +73,9 @@ export const usePoiStore = defineStore('poi', () => {
   // 重置筛选条件
   function resetFilters() {
     filters.value = {
-      province: '',
-      city: '',
-      type: '',
-      isWild: false,
+      nature: ['正规', '野生'],
+      category: ['人文', '自然'],
+      tags: [],
     }
   }
 
