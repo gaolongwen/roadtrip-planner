@@ -2,14 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import engine, Base
-from routers import pois
+from routers import pois, trips
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="自驾行程规划 API",
-    description="自驾行程规划网站后端API，提供景点(POI)管理功能",
+    description="自驾行程规划网站后端API，提供景点(POI)管理和行程协作功能",
     version="1.0.0",
 )
 
@@ -24,6 +24,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(pois.router)
+app.include_router(trips.router)
 
 
 @app.get("/")

@@ -14,6 +14,11 @@ export default defineConfig({
       resolvers: [ElementPlusResolver()],
     }),
   ],
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
+  },
   define: {
     'process.env.VITE_AMAP_KEY': JSON.stringify(process.env.VITE_AMAP_KEY),
     'process.env.VITE_API_BASE_URL': JSON.stringify(process.env.VITE_API_BASE_URL),

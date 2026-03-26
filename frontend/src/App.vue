@@ -1,18 +1,18 @@
 <template>
-  <el-container>
-    <el-header>
-      <h1>🚗 自驾行程规划</h1>
-    </el-header>
-    <MapView />
-  </el-container>
+  <router-view />
 </template>
 
 <script setup>
-import MapView from './views/MapView.vue'
 </script>
 
-<style scoped>
-.el-container {
-  height: 100vh;
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+#app {
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
 }
 </style>

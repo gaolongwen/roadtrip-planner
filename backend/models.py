@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
 from database import Base
 
 
@@ -26,3 +26,33 @@ class POI(Base):
     is_wild = Column(Boolean, default=False, comment="是否野生景点")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+
+class Trip(Base):
+    __tablename__ = "trips"
+
+    trip_id = Column(String(36), primary_key=True, comment="行程UUID")
+    share_code = Column(String(8), unique=True, nullable=False, comment="分享码")
+    name = Column(String(255), default="未命名行程", comment="行程名称")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+
+class TripPOI(Base):
+    __tablename__ = "trip_pois"
+
+    trip_id = Column(String(36), primary_key=True, comment="行程ID")
+    poi_id = Column(Integer, primary_key=True, comment="景点ID")
+    day_number = Column(Integer, default=1, comment="第几天")
+    order_index = Column(Integer, default=0, comment="顺序")
+    notes = Column(Text, comment="备注")
+    added_by = Column(String(100), comment="添加者昵称")
+    added_at = Column(DateTime, default=datetime.utcnow, comment="添加时间")
+
+
+class TripMember(Base):
+    __tablename__ = "trip_members"
+
+    trip_id = Column(String(36), primary_key=True, comment="行程ID")
+    nickname = Column(String(100), primary_key=True, comment="昵称")
+    joined_at = Column(DateTime, default=datetime.utcnow, comment="加入时间")

@@ -29,32 +29,71 @@ export const poiApi = {
     return api.get(`/api/pois/${id}`)
   },
 
-  // 创建景点
-  createPoi(data) {
-    return api.post('/api/pois', data)
-  },
-
-  // 更新景点
-  updatePoi(id, data) {
-    return api.put(`/api/pois/${id}`, data)
-  },
-
-  // 删除景点
-  deletePoi(id) {
-    return api.delete(`/api/pois/${id}`)
-  },
-
-  // 获取地图范围内景点
-  getPoisInBbox(minLng, maxLng, minLat, maxLat, filters = {}) {
+  // 获取地图范围内的景点
+  getPoisByBbox(minLat, maxLat, minLng, maxLng, params = {}) {
     return api.get('/api/pois/bbox', {
       params: {
-        min_lng: minLng,
-        max_lng: maxLng,
         min_lat: minLat,
         max_lat: maxLat,
-        ...filters,
+        min_lng: minLng,
+        max_lng: maxLng,
+        ...params,
       },
     })
+  },
+}
+
+// 行程相关 API
+export const tripApi = {
+  // 创建行程
+  createTrip(name = '未命名行程') {
+    return api.post(`/api/trips?name=${encodeURIComponent(name)}`)
+  },
+
+  // 获取行程详情
+  getTrip(tripId) {
+    return api.get(`/api/trips/${tripId}`)
+  },
+
+  // 通过分享码获取行程
+  getTripByCode(shareCode) {
+    return api.get(`/api/trips/code/${shareCode}`)
+  },
+
+  // 更新行程名称
+  updateTrip(tripId, name) {
+    return api.patch(`/api/trips/${tripId}?name=${encodeURIComponent(name)}`)
+  },
+
+  // 添加景点到行程
+  addPoi(tripId, poiId, dayNumber = 1, notes = '', nickname = '匿名') {
+    const params = new URLSearchParams({ poi_id: poiId, day_number: dayNumber, notes, nickname })
+    return api.post(`/api/trips/${tripId}/pois?${params}`)
+  },
+
+  // 移除景点
+  removePoi(tripId, poiId) {
+    return api.delete(`/api/trips/${tripId}/pois/${poiId}`)
+  },
+
+  // 更新景点信息
+  updateTripPoi(tripId, poiId, data) {
+    const params = new URLSearchParams()
+    if (data.day_number !== undefined) params.append('day_number', data.day_number)
+    if (data.order_index !== undefined) params.append('order_index', data.order_index)
+    if (data.notes !== undefined) params.append('notes', data.notes)
+    return api.patch(`/api/trips/${tripId}/pois/${poiId}?${params}`)
+  },
+
+  // 加入行程
+  joinTrip(tripId, nickname) {
+    const params = new URLSearchParams({ nickname })
+    return api.post(`/api/trips/${tripId}/members?${params}`)
+  },
+
+  // 获取成员列表
+  getMembers(tripId) {
+    return api.get(`/api/trips/${tripId}/members`)
   },
 }
 
