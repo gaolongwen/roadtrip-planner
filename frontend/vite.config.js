@@ -22,4 +22,20 @@ export default defineConfig({
     port: 5173,
     host: true,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vue 核心单独打包
+          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          // Element Plus 单独打包
+          'element-plus': ['element-plus', '@element-plus/icons-vue'],
+          // 高德地图加载器单独打包
+          'amap': ['@amap/amap-jsapi-loader'],
+        },
+      },
+    },
+    // 提高 chunk 大小警告阈值
+    chunkSizeWarningLimit: 600,
+  },
 })

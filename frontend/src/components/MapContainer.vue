@@ -18,6 +18,7 @@ const poiStore = usePoiStore()
 const map = ref(null)
 const markers = ref([])
 const AMap = ref(null)
+let debounceTimer = null
 
 // 初始化地图
 const initMap = async () => {
@@ -32,27 +33,29 @@ const initMap = async () => {
     
     map.value = new amapInstance.Map('map-container', {
       zoom: 8,
-      center: [113.5, 35.5], // 河南省中心点
+      center: [113.5, 35.5],
       mapStyle: 'amap://styles/normal',
     })
     
-    // 添加控件
     map.value.addControl(new amapInstance.Scale())
     map.value.addControl(new amapInstance.ToolBar())
     
-    // 地图移动结束后刷新景点
-    map.value.on('moveend', () => {
-      refreshPoisInBounds()
-    })
-    
-    map.value.on('zoomend', () => {
-      refreshPoisInBounds()
-    })
+    // 防抖刷新
+    map.value.on('moveend', debounceRefresh)
+    map.value.on('zoomend', debounceRefresh)
     
     emit('mapReady', map.value)
   } catch (error) {
     console.error('地图初始化失败:', error)
   }
+}
+
+// 防抖刷新（300ms）
+const debounceRefresh = () => {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    refreshPoisInBounds()
+  }, 300)
 }
 
 // 刷新可见范围内的景点
@@ -71,21 +74,27 @@ const refreshPoisInBounds = async () => {
   )
 }
 
-// 添加标记点
+// 批量添加标记（性能优化）
 const addMarkers = (pois) => {
+  if (!AMap.value || !map.value) return
+  
   // 清除旧标记
   markers.value.forEach(marker => marker.setMap(null))
   markers.value = []
   
-  if (!AMap.value || !map.value) return
+  if (!pois.length) return
   
-  pois.forEach(poi => {
-    if (!poi.longitude || !poi.latitude) return
-    
+  // 过滤有效坐标
+  const validPois = pois.filter(poi => poi.longitude && poi.latitude)
+  if (!validPois.length) return
+  
+  // 批量创建标记
+  const newMarkers = validPois.map(poi => {
     const marker = new AMap.value.Marker({
       position: [poi.longitude, poi.latitude],
       title: poi.name,
       content: `<div class="custom-marker"><span>${poi.name}</span></div>`,
+      offset: new AMap.value.Pixel(-30, -12),
     })
     
     marker.on('click', () => {
@@ -93,9 +102,12 @@ const addMarkers = (pois) => {
       emit('markerClick', poi)
     })
     
-    marker.setMap(map.value)
-    markers.value.push(marker)
+    return marker
   })
+  
+  // 批量添加到地图
+  map.value.add(newMarkers)
+  markers.value = newMarkers
 }
 
 // 监听景点数据变化
@@ -115,12 +127,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (debounceTimer) clearTimeout(debounceTimer)
   if (map.value) {
     map.value.destroy()
   }
 })
 
-// 暴露方法给父组件
 defineExpose({
   panTo,
   refreshPoisInBounds,
