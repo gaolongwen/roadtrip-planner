@@ -134,22 +134,23 @@ defineExpose({
 }
 
 .custom-marker {
-  background: #409eff;
+  background: rgba(64, 158, 255, 0.65);
   color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 11px;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .custom-marker::after {
   content: '';
   position: absolute;
-  bottom: -6px;
+  bottom: -5px;
   left: 50%;
   transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: #409eff;
+  border: 5px solid transparent;
+  border-top-color: rgba(64, 158, 255, 0.65);
 }
 </style>
