@@ -1,0 +1,79 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.el-header {
+  background-color: #409eff;
+  color: white;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+}
+
+.el-header h1 {
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.main-container {
+  display: flex;
+  height: calc(100vh - 60px);
+}
+
+.left-panel {
+  width: 320px;
+  border-right: 1px solid #e4e7ed;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-panel {
+  flex: 1;
+  position: relative;
+}
+
+.poi-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.poi-list-item {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.poi-list-item:hover {
+  background-color: #f5f7fa;
+}
+
+.poi-list-item.active {
+  background-color: #ecf5ff;
+}
+
+.poi-card-overlay {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 320px;
+  z-index: 1000;
+}
+
+#map-container {
+  width: 100%;
+  height: 100%;
+}
