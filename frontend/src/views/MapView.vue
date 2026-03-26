@@ -84,7 +84,13 @@ const handleMapReady = (map) => {
 
 // 处理筛选
 const handleFilter = async () => {
-  await poiStore.fetchPois()
+  // 如果地图已就绪，刷新地图范围内的景点（带筛选）
+  if (mapRef.value && mapReady.value) {
+    mapRef.value.refreshPoisInBounds()
+  } else {
+    // 否则直接获取景点列表
+    await poiStore.fetchPois()
+  }
 }
 
 // 刷新景点列表
