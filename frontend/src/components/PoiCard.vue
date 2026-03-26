@@ -10,6 +10,11 @@
     </template>
     
     <div class="poi-content">
+      <!-- 景点图片 -->
+      <div class="poi-image" v-if="poi.images && poi.images.length > 0">
+        <img :src="poi.images[0]" :alt="poi.name" @error="handleImageError" />
+      </div>
+      
       <div class="poi-info">
         <el-icon><Location /></el-icon>
         <span>{{ poi.address || '暂无地址' }}</span>
@@ -26,23 +31,28 @@
         />
       </div>
       
-      <div class="poi-info" v-if="poi.type">
+      <div class="poi-info">
         <el-icon><CollectionTag /></el-icon>
-        <el-tag size="small">{{ poi.type }}</el-tag>
-      </div>
-      
-      <div class="poi-info" v-if="poi.isWild">
-        <el-icon><Compass /></el-icon>
-        <el-tag type="warning" size="small">野生景点</el-tag>
+        <el-tag size="small">{{ poi.category || '未分类' }}</el-tag>
+        <el-tag v-if="poi.is_wild" type="warning" size="small">野生</el-tag>
       </div>
       
       <div class="poi-description" v-if="poi.description">
         <p>{{ poi.description }}</p>
       </div>
       
+      <!-- 参考链接 -->
+      <div class="poi-reference" v-if="poi.reference_url">
+        <el-icon><Link /></el-icon>
+        <a :href="poi.reference_url" target="_blank" rel="noopener noreferrer">
+          查看详情
+          <el-icon><TopRight /></el-icon>
+        </a>
+      </div>
+      
       <div class="poi-coords">
         <el-icon><MapLocation /></el-icon>
-        <span>经度: {{ poi.longitude?.toFixed(6) }}, 纬度: {{ poi.latitude?.toFixed(6) }}</span>
+        <span>{{ poi.longitude?.toFixed(4) }}°E, {{ poi.latitude?.toFixed(4) }}°N</span>
       </div>
     </div>
     
@@ -68,11 +78,16 @@ defineProps({
 })
 
 defineEmits(['close', 'navigate', 'edit'])
+
+const handleImageError = (e) => {
+  e.target.style.display = 'none'
+}
 </script>
 
 <style scoped>
 .poi-card {
   border-radius: 8px;
+  max-width: 320px;
 }
 
 .card-header {
@@ -92,12 +107,26 @@ defineEmits(['close', 'navigate', 'edit'])
   gap: 12px;
 }
 
+.poi-image {
+  width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.poi-image img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  display: block;
+}
+
 .poi-info {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
   color: #606266;
+  flex-wrap: wrap;
 }
 
 .poi-description {
@@ -107,6 +136,25 @@ defineEmits(['close', 'navigate', 'edit'])
   font-size: 14px;
   color: #606266;
   line-height: 1.6;
+}
+
+.poi-reference {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.poi-reference a {
+  color: #409eff;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.poi-reference a:hover {
+  text-decoration: underline;
 }
 
 .poi-coords {

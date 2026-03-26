@@ -22,6 +22,7 @@ class POI(Base):
     description = Column(String(2000), comment="描述")
     tips = Column(String(1000), comment="游玩贴士")
     images = Column(String(5000), default="[]", comment="图片URL，JSON数组字符串")
+    reference_url = Column(String(500), comment="参考链接")
     is_wild = Column(Boolean, default=False, comment="是否野生景点")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")

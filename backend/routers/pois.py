@@ -30,6 +30,7 @@ def poi_to_response(poi: POI) -> dict:
         "description": poi.description,
         "tips": poi.tips,
         "images": json.loads(poi.images) if poi.images else [],
+        "reference_url": poi.reference_url,
         "is_wild": poi.is_wild,
         "created_at": poi.created_at,
         "updated_at": poi.updated_at,

@@ -19,6 +19,7 @@ class POIBase(BaseModel):
     description: Optional[str] = None
     tips: Optional[str] = None
     images: Optional[List[str]] = None
+    reference_url: Optional[str] = Field(default=None, description="参考链接")
     is_wild: Optional[bool] = False
 
 
@@ -42,6 +43,7 @@ class POIUpdate(BaseModel):
     description: Optional[str] = None
     tips: Optional[str] = None
     images: Optional[List[str]] = None
+    reference_url: Optional[str] = None
     is_wild: Optional[bool] = None
 
 
