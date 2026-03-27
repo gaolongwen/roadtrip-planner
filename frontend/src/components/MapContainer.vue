@@ -18,9 +18,17 @@ const props = defineProps({
     default: false
   },
   addedPoiIds: {
-    type: Set,
+    type: [Set, Array],
     default: () => new Set()
   }
+})
+
+// 将 addedPoiIds 转换为数组（便于响应式）
+const addedIdsArray = computed(() => {
+  if (props.addedPoiIds instanceof Set) {
+    return Array.from(props.addedPoiIds)
+  }
+  return props.addedPoiIds || []
 })
 
 const emit = defineEmits(['mapReady', 'markerClick', 'poi-click', 'poi-add'])
@@ -101,8 +109,8 @@ const addMarkers = (pois) => {
   let validPois = pois.filter(poi => poi.longitude && poi.latitude)
   
   // 如果开启只显示已添加景点，则过滤
-  if (props.showOnlyAdded && props.addedPoiIds.size > 0) {
-    validPois = validPois.filter(poi => props.addedPoiIds.has(poi.id))
+  if (props.showOnlyAdded && addedIdsArray.value.length > 0) {
+    validPois = validPois.filter(poi => addedIdsArray.value.includes(poi.id))
   }
   
   if (!validPois.length) return
@@ -135,7 +143,7 @@ watch(() => poiStore.pois, (newPois) => {
 }, { deep: true })
 
 // 监听过滤条件变化
-watch([() => props.showOnlyAdded, () => props.addedPoiIds], () => {
+watch([() => props.showOnlyAdded, addedIdsArray], () => {
   addMarkers(poiStore.pois)
 }, { deep: true })
 
