@@ -732,9 +732,9 @@ def generate_default_plan(pois: list, start_city: str, end_city: str, days: int)
                 "pois": current_pois.copy(),
                 "stay_city": stay_city,
                 "route": f"{current_city} → " + " → ".join([p["name"] for p in current_pois]) + f" → {stay_city}",
-                "drive_time": 60,
+                "drive_time": 120,  # 默认2小时驾车
                 "visit_time": sum(p["visit_hours"] for p in current_pois),
-                "total_time": sum(p["visit_hours"] for p in current_pois) + 1,
+                "total_time": sum(p["visit_hours"] for p in current_pois) + 2,
                 "description": f"游览{len(current_pois)}个景点，住宿{stay_city}"
             })
             current_city = stay_city
@@ -748,9 +748,9 @@ def generate_default_plan(pois: list, start_city: str, end_city: str, days: int)
             "pois": current_pois,
             "stay_city": end_city,
             "route": f"{current_city} → " + " → ".join([p["name"] for p in current_pois]) + f" → {end_city}",
-            "drive_time": 60,
+            "drive_time": 120,  # 默认2小时驾车
             "visit_time": sum(p["visit_hours"] for p in current_pois),
-            "total_time": sum(p["visit_hours"] for p in current_pois) + 1,
+            "total_time": sum(p["visit_hours"] for p in current_pois) + 2,
             "description": f"游览{len(current_pois)}个景点，抵达终点{end_city}"
         })
 
