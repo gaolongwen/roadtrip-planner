@@ -152,6 +152,7 @@
                 @click="handlePlanTrip"
                 :disabled="!canPlan"
                 :loading="planning"
+                style="width: 100%"
               >
                 规划行程
               </el-button>
@@ -160,9 +161,25 @@
                 @click="handleExportTrip"
                 :disabled="!hasRoute"
                 :loading="exporting"
+                style="width: 100%; margin-top: 10px; margin-left: 0"
               >
                 导出行程
               </el-button>
+            </div>
+            
+            <!-- 规划结果展示 -->
+            <div class="plan-result" v-if="routeData && routeData.days">
+              <div class="result-title">📅 行程安排</div>
+              <div class="day-card" v-for="day in routeData.days" :key="day.day">
+                <div class="day-header">
+                  <span class="day-number">第{{ day.day }}天</span>
+                </div>
+                <div class="day-route">{{ day.route || '待规划' }}</div>
+                <div class="day-pois" v-if="day.pois && day.pois.length">
+                  <el-tag v-for="poi in day.pois" :key="poi" size="small" style="margin: 2px">{{ poi }}</el-tag>
+                </div>
+                <div class="day-desc" v-if="day.description">{{ day.description }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -295,6 +312,42 @@
         <el-button type="primary" @click="renameTrip">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 规划进度对话框 -->
+    <el-dialog 
+      v-model="showPlanDialog" 
+      title="行程规划中..." 
+      width="400px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+    >
+      <div class="plan-progress">
+        <el-progress :percentage="planProgress" :format="() => planProgressText" />
+        <div class="progress-steps">
+          <div class="step" :class="{ active: planStep >= 1, done: planStep > 1 }">
+            <el-icon v-if="planStep > 1"><Check /></el-icon>
+            <span v-else>1</span>
+            获取景点坐标
+          </div>
+          <div class="step" :class="{ active: planStep >= 2, done: planStep > 2 }">
+            <el-icon v-if="planStep > 2"><Check /></el-icon>
+            <span v-else>2</span>
+            计算路线距离
+          </div>
+          <div class="step" :class="{ active: planStep >= 3, done: planStep > 3 }">
+            <el-icon v-if="planStep > 3"><Check /></el-icon>
+            <span v-else>3</span>
+            AI 规划行程
+          </div>
+          <div class="step" :class="{ active: planStep >= 4 }">
+            <el-icon v-if="planStep >= 4"><Check /></el-icon>
+            <span v-else>4</span>
+            生成结果
+          </div>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -302,7 +355,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Link, Edit, Delete, Download, Refresh, Loading, List, ArrowDown, ArrowUp, LocationFilled } from '@element-plus/icons-vue'
+import { Plus, Link, Edit, Delete, Download, Refresh, Loading, List, ArrowDown, ArrowUp, LocationFilled, Check } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import MapContainer from '@/components/MapContainer.vue'
 import PoiFilter from '@/components/PoiFilter.vue'
@@ -341,6 +394,12 @@ const planForm = ref({
 const planning = ref(false)
 const exporting = ref(false)
 const routeData = ref(null)
+
+// 规划进度
+const showPlanDialog = ref(false)
+const planProgress = ref(0)
+const planProgressText = ref('准备中...')
+const planStep = ref(0)
 
 // localStorage 存储相关
 const getPlanStorageKey = (tripId) => `trip_plan_info_${tripId}`
@@ -463,13 +522,40 @@ async function handlePlanTrip() {
   }
 
   planning.value = true
+  showPlanDialog.value = true
+  planProgress.value = 0
+  planStep.value = 0
+  planProgressText.value = '准备中...'
+
   try {
+    // 步骤1：获取坐标
+    planStep.value = 1
+    planProgress.value = 20
+    planProgressText.value = '获取景点坐标...'
+    await new Promise(r => setTimeout(r, 500))
+
+    // 步骤2：计算距离
+    planStep.value = 2
+    planProgress.value = 40
+    planProgressText.value = '计算路线距离...'
+    await new Promise(r => setTimeout(r, 500))
+
+    // 步骤3：AI规划
+    planStep.value = 3
+    planProgress.value = 60
+    planProgressText.value = 'AI 正在规划最佳路线...'
+    
     const result = await tripApi.planTrip(
       currentTrip.value.trip_id,
       planForm.value.startCity,
       planForm.value.endCity,
       planForm.value.days
     )
+
+    // 步骤4：生成结果
+    planStep.value = 4
+    planProgress.value = 100
+    planProgressText.value = '规划完成！'
 
     // 保存规划结果
     routeData.value = result.route
@@ -479,8 +565,11 @@ async function handlePlanTrip() {
       mapRef.value.drawRoute(result.route)
     }
 
+    await new Promise(r => setTimeout(r, 500))
+    showPlanDialog.value = false
     ElMessage.success('行程规划完成！')
   } catch (error) {
+    showPlanDialog.value = false
     ElMessage.error('规划失败: ' + (error.message || '未知错误'))
   } finally {
     planning.value = false
@@ -934,6 +1023,112 @@ onMounted(async () => {
 
 .form-actions .el-button {
   width: 100%;
+}
+
+/* 规划结果展示 */
+.plan-result {
+  margin-top: 20px;
+  border-top: 1px solid #eee;
+  padding-top: 15px;
+}
+
+.result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 12px;
+}
+
+.day-card {
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.day-card .day-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.day-card .day-number {
+  font-weight: 600;
+  color: #409eff;
+  font-size: 13px;
+}
+
+.day-card .day-route {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+
+.day-card .day-pois {
+  margin-bottom: 6px;
+}
+
+.day-card .day-desc {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+/* 规划进度对话框 */
+.plan-progress {
+  text-align: center;
+}
+
+.plan-progress .el-progress {
+  margin-bottom: 30px;
+}
+
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  text-align: left;
+}
+
+.progress-steps .step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #c0c4cc;
+  transition: all 0.3s;
+}
+
+.progress-steps .step.active {
+  color: #409eff;
+}
+
+.progress-steps .step.done {
+  color: #67c23a;
+}
+
+.progress-steps .step .el-icon {
+  font-size: 18px;
+}
+
+.progress-steps .step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e4e7ed;
+  color: #fff;
+  font-size: 12px;
+}
+
+.progress-steps .step.active span {
+  background: #409eff;
+}
+
+.progress-steps .step.done span {
+  background: #67c23a;
 }
 
 /* 景点详情卡片 */
