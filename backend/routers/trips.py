@@ -512,23 +512,38 @@ def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> di
 
 
 async def get_driving_distance(origin: str, destination: str) -> dict:
-    """计算两点距离（优先高德API，失败则用直线距离估算）"""
-    
-    # 先解析坐标
+    """调用高德驾车API获取真实距离和时长"""
+    url = "https://restapi.amap.com/v3/direction/driving"
+    params = {
+        "key": AMAP_KEY,
+        "origin": origin,
+        "destination": destination,
+        "extensions": "base"
+    }
+
     try:
-        o_lng, o_lat = map(float, origin.split(","))
-        d_lng, d_lat = map(float, destination.split(","))
-    except:
-        return {"distance": 0, "duration": 0}
-    
-    # 直接用直线距离估算（不调用高德API，境外服务器会超时）
-    result = haversine_distance(o_lat, o_lng, d_lat, d_lng)
-    print(f"直线估算: {o_lng:.2f},{o_lat:.2f} -> {d_lng:.2f},{d_lat:.2f}: {result['distance']//1000}公里, {result['duration']//60}分钟")
-    return result
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url, params=params)
+            data = response.json()
+
+            if data.get("status") == "1" and data.get("route"):
+                path = data["route"]["paths"][0]
+                result = {
+                    "distance": int(path.get("distance", 0)),
+                    "duration": int(path.get("duration", 0))
+                }
+                print(f"高德API: {origin[:15]} -> {destination[:15]}: {result['distance']//1000}公里, {result['duration']//60}分钟")
+                return result
+            else:
+                print(f"高德API失败: status={data.get('status')}, info={data.get('info')}")
+                return estimate_distance(origin, destination)
+    except Exception as e:
+        print(f"高德API异常: {e}")
+        return estimate_distance(origin, destination)
 
 
 def estimate_distance(origin: str, destination: str) -> dict:
-    """备用：用直线距离估算"""
+    """备用：用 Haversine 公式估算"""
     try:
         o_lng, o_lat = map(float, origin.split(","))
         d_lng, d_lat = map(float, destination.split(","))
