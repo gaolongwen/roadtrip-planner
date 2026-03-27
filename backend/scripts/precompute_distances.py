@@ -103,9 +103,10 @@ async def compute_all_distances():
                 result = await get_driving_distance(client, origin, destination)
                 
                 if result:
+                    # 存储时用排序后的顺序，避免重复
                     distance = POIDistance(
-                        poi1_id=poi1.id,
-                        poi2_id=poi2.id,
+                        poi1_id=key[0],
+                        poi2_id=key[1],
                         distance=result["distance"],
                         duration=result["duration"],
                         source=result["source"]
