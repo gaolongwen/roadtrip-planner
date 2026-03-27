@@ -3,10 +3,11 @@ import random
 import string
 import json
 import os
+import asyncio
 import httpx
 from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Form
+from typing import List, Optional, Dict
+from fastapi import APIRouter, Depends, HTTPException, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
@@ -23,6 +24,9 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
+
+# 后台任务状态存储（内存存储，重启后丢失）
+planning_tasks: Dict[str, dict] = {}
 
 
 def generate_share_code(length=6):
@@ -47,6 +51,142 @@ def poi_to_dict(poi: POI) -> dict:
         "rating": poi.rating,
         "images": json.loads(poi.images) if poi.images else [],
     }
+
+
+async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, task_id: str):
+    """后台执行行程规划"""
+    from database import SessionLocal
+    
+    planning_tasks[task_id]["status"] = "calculating"
+    planning_tasks[task_id]["progress"] = 20
+    
+    try:
+        db = SessionLocal()
+        
+        # 获取行程中的所有景点
+        trip_pois = db.query(TripPOI).filter(TripPOI.trip_id == trip_id).all()
+        if not trip_pois:
+            raise Exception("行程中没有景点")
+
+        poi_ids = [tp.poi_id for tp in trip_pois]
+        pois = db.query(POI).filter(POI.id.in_(poi_ids)).all()
+
+        if not pois:
+            raise Exception("未找到景点信息")
+
+        # 转换为字典格式
+        poi_list = []
+        for poi in pois:
+            poi_list.append({
+                "id": poi.id,
+                "name": poi.name,
+                "city": poi.city,
+                "latitude": poi.latitude,
+                "longitude": poi.longitude,
+                "duration": poi.duration or 2
+            })
+
+        # 获取起点和终点坐标
+        planning_tasks[task_id]["status"] = "geocoding"
+        planning_tasks[task_id]["progress"] = 30
+        start_loc = await get_city_location(start_city)
+        end_loc = await get_city_location(end_city)
+
+        # 构建景点坐标映射
+        poi_coords = {p["name"]: {"lng": p["longitude"], "lat": p["latitude"]} for p in poi_list}
+
+        # 并行计算所有距离
+        planning_tasks[task_id]["status"] = "distance"
+        planning_tasks[task_id]["progress"] = 40
+        distance_tasks = []
+        distance_keys = []
+
+        if start_loc:
+            for poi in poi_list:
+                distance_tasks.append(get_driving_distance(
+                    f"{start_loc[0]},{start_loc[1]}",
+                    f"{poi['longitude']},{poi['latitude']}"
+                ))
+                distance_keys.append((start_city, poi["name"]))
+
+        for i, poi1 in enumerate(poi_list):
+            for j, poi2 in enumerate(poi_list):
+                if i < j:
+                    distance_tasks.append(get_driving_distance(
+                        f"{poi1['longitude']},{poi1['latitude']}",
+                        f"{poi2['longitude']},{poi2['latitude']}"
+                    ))
+                    distance_keys.append((poi1["name"], poi2["name"]))
+
+        if end_loc:
+            for poi in poi_list:
+                distance_tasks.append(get_driving_distance(
+                    f"{poi['longitude']},{poi['latitude']}",
+                    f"{end_loc[0]},{end_loc[1]}"
+                ))
+                distance_keys.append((poi["name"], end_city))
+
+        distance_results = await asyncio.gather(*distance_tasks, return_exceptions=True)
+
+        distance_matrix = {}
+        for key, result in zip(distance_keys, distance_results):
+            if isinstance(result, Exception):
+                distance_matrix[key] = {"distance": 0, "duration": 0}
+            else:
+                distance_matrix[key] = result
+                if key[0] != start_city and key[1] != end_city:
+                    distance_matrix[(key[1], key[0])] = result
+
+        # 调用 LLM 规划
+        planning_tasks[task_id]["status"] = "planning"
+        planning_tasks[task_id]["progress"] = 70
+        planning_tasks[task_id]["message"] = "AI 正在规划最佳路线..."
+        
+        plan_result = await call_llm_plan(poi_list, start_city, end_city, days, distance_matrix, poi_coords)
+
+        # 添加景点坐标信息
+        plan_result["poi_coords"] = poi_coords
+        plan_result["start_city"] = start_city
+        plan_result["end_city"] = end_city
+        plan_result["start_coord"] = {"lng": start_loc[0], "lat": start_loc[1]} if start_loc else None
+        plan_result["end_coord"] = {"lng": end_loc[0], "lat": end_loc[1]} if end_loc else None
+
+        # 存储规划结果
+        planning_tasks[task_id]["status"] = "saving"
+        planning_tasks[task_id]["progress"] = 90
+        
+        route = db.query(TripRoute).filter(TripRoute.trip_id == trip_id).first()
+        if route:
+            route.start_city = start_city
+            route.end_city = end_city
+            route.total_days = days
+            route.route_data = json.dumps(plan_result, ensure_ascii=False)
+            route.updated_at = datetime.utcnow()
+        else:
+            route = TripRoute(
+                trip_id=trip_id,
+                start_city=start_city,
+                end_city=end_city,
+                total_days=days,
+                route_data=json.dumps(plan_result, ensure_ascii=False)
+            )
+            db.add(route)
+
+        trip = db.query(Trip).filter(Trip.trip_id == trip_id).first()
+        if trip:
+            trip.updated_at = datetime.utcnow()
+        db.commit()
+
+        # 完成
+        planning_tasks[task_id]["status"] = "completed"
+        planning_tasks[task_id]["progress"] = 100
+        planning_tasks[task_id]["result"] = plan_result
+
+    except Exception as e:
+        planning_tasks[task_id]["status"] = "failed"
+        planning_tasks[task_id]["error"] = str(e)
+    finally:
+        db.close()
 
 
 # ========== 行程管理 ==========
@@ -574,107 +714,67 @@ async def plan_trip_route(
     start_city: str = Form(...),
     end_city: str = Form(...),
     days: int = Form(default=3),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
-    """规划行程路线"""
+    """规划行程路线（异步后台执行）"""
     trip = db.query(Trip).filter(Trip.trip_id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="行程不存在")
 
-    # 获取行程中的所有景点
-    trip_pois = db.query(TripPOI).filter(TripPOI.trip_id == trip_id).all()
-    if not trip_pois:
+    # 检查是否有景点
+    trip_pois = db.query(TripPOI).filter(TripPOI.trip_id == trip_id).count()
+    if trip_pois == 0:
         raise HTTPException(status_code=400, detail="行程中没有景点，请先添加景点")
 
-    poi_ids = [tp.poi_id for tp in trip_pois]
-    pois = db.query(POI).filter(POI.id.in_(poi_ids)).all()
+    # 创建任务
+    task_id = str(uuid.uuid4())
+    planning_tasks[task_id] = {
+        "trip_id": trip_id,
+        "status": "pending",
+        "progress": 0,
+        "created_at": datetime.utcnow().isoformat()
+    }
 
-    if not pois:
-        raise HTTPException(status_code=400, detail="未找到景点信息")
+    # 启动后台任务
+    background_tasks.add_task(do_plan_trip, trip_id, start_city, end_city, days, task_id)
 
-    # 转换为字典格式
-    poi_list = []
-    for poi in pois:
-        poi_list.append({
-            "id": poi.id,
-            "name": poi.name,
-            "city": poi.city,
-            "latitude": poi.latitude,
-            "longitude": poi.longitude,
-            "duration": poi.duration or 2
-        })
+    return {
+        "message": "规划任务已启动",
+        "task_id": task_id,
+        "status_url": f"/api/trips/{trip_id}/plan/status/{task_id}"
+    }
 
-    # 获取起点和终点坐标
-    start_loc = await get_city_location(start_city)
-    end_loc = await get_city_location(end_city)
 
-    # 构建景点坐标映射
-    poi_coords = {p["name"]: {"lng": p["longitude"], "lat": p["latitude"]} for p in poi_list}
+@router.get("/{trip_id}/plan/status/{task_id}")
+def get_plan_status(trip_id: str, task_id: str):
+    """获取规划任务状态"""
+    if task_id not in planning_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
 
-    # 计算所有景点之间的距离矩阵
-    distance_matrix = {}
+    task = planning_tasks[task_id]
     
-    # 计算起点到各景点的距离
-    if start_loc:
-        for poi in poi_list:
-            key = (start_city, poi["name"])
-            distance_matrix[key] = await get_driving_distance(
-                f"{start_loc[0]},{start_loc[1]}",
-                f"{poi['longitude']},{poi['latitude']}"
-            )
+    # 状态映射
+    status_map = {
+        "pending": "准备中",
+        "geocoding": "获取坐标",
+        "distance": "计算距离",
+        "calculating": "计算中",
+        "planning": "AI规划中",
+        "saving": "保存结果",
+        "completed": "已完成",
+        "failed": "失败"
+    }
 
-    # 计算景点之间的距离
-    for i, poi1 in enumerate(poi_list):
-        for j, poi2 in enumerate(poi_list):
-            if i != j:
-                key = (poi1["name"], poi2["name"])
-                if key not in distance_matrix:
-                    distance_matrix[key] = await get_driving_distance(
-                        f"{poi1['longitude']},{poi1['latitude']}",
-                        f"{poi2['longitude']},{poi2['latitude']}"
-                    )
-
-    # 计算各景点到终点的距离
-    if end_loc:
-        for poi in poi_list:
-            key = (poi["name"], end_city)
-            distance_matrix[key] = await get_driving_distance(
-                f"{poi['longitude']},{poi['latitude']}",
-                f"{end_loc[0]},{end_loc[1]}"
-            )
-
-    # 调用 LLM 规划
-    plan_result = await call_llm_plan(poi_list, start_city, end_city, days, distance_matrix, poi_coords)
-
-    # 添加景点坐标信息
-    plan_result["poi_coords"] = poi_coords
-    plan_result["start_city"] = start_city
-    plan_result["end_city"] = end_city
-    plan_result["start_coord"] = {"lng": start_loc[0], "lat": start_loc[1]} if start_loc else None
-    plan_result["end_coord"] = {"lng": end_loc[0], "lat": end_loc[1]} if end_loc else None
-
-    # 存储规划结果
-    route = db.query(TripRoute).filter(TripRoute.trip_id == trip_id).first()
-    if route:
-        route.start_city = start_city
-        route.end_city = end_city
-        route.total_days = days
-        route.route_data = json.dumps(plan_result, ensure_ascii=False)
-        route.updated_at = datetime.utcnow()
-    else:
-        route = TripRoute(
-            trip_id=trip_id,
-            start_city=start_city,
-            end_city=end_city,
-            total_days=days,
-            route_data=json.dumps(plan_result, ensure_ascii=False)
-        )
-        db.add(route)
-
-    trip.updated_at = datetime.utcnow()
-    db.commit()
-
-    return {"message": "规划成功", "route": plan_result}
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "status_text": status_map.get(task["status"], task["status"]),
+        "progress": task["progress"],
+        "message": task.get("message", ""),
+        "error": task.get("error"),
+        "result": task.get("result") if task["status"] == "completed" else None
+    }
 
 
 @router.get("/{trip_id}/route")

@@ -156,7 +156,7 @@ export const tripApi = {
     return api.get(`/api/trips/${tripId}/members`)
   },
 
-  // 规划行程路线
+    // 规划行程路线（异步轮询）
   planTrip(tripId, startCity, endCity, days) {
     const formData = new FormData()
     formData.append('start_city', startCity)
@@ -165,6 +165,11 @@ export const tripApi = {
     return api.post(`/api/trips/${tripId}/plan`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
+  },
+
+  // 获取规划任务状态
+  getPlanStatus(tripId, taskId) {
+    return api.get(`/api/trips/${tripId}/plan/status/${taskId}`)
   },
 
   // 获取行程路线

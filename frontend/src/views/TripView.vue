@@ -542,23 +542,7 @@ async function handlePlanTrip() {
   planProgressText.value = '准备中...'
 
   try {
-    // 步骤1：获取坐标
-    planStep.value = 1
-    planProgress.value = 20
-    planProgressText.value = '获取景点坐标...'
-    await new Promise(r => setTimeout(r, 500))
-
-    // 步骤2：计算距离
-    planStep.value = 2
-    planProgress.value = 40
-    planProgressText.value = '计算路线距离...'
-    await new Promise(r => setTimeout(r, 500))
-
-    // 步骤3：AI规划
-    planStep.value = 3
-    planProgress.value = 60
-    planProgressText.value = 'AI 正在规划最佳路线...'
-    
+    // 启动规划任务
     const result = await tripApi.planTrip(
       currentTrip.value.trip_id,
       planForm.value.startCity,
@@ -566,26 +550,62 @@ async function handlePlanTrip() {
       planForm.value.days
     )
 
-    // 步骤4：生成结果
-    planStep.value = 4
-    planProgress.value = 100
-    planProgressText.value = '规划完成！'
+    const taskId = result.task_id
+    planProgressText.value = '后台计算中...'
 
-    // 保存规划结果
-    routeData.value = result.route
+    // 轮询任务状态
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await tripApi.getPlanStatus(currentTrip.value.trip_id, taskId)
+        
+        planProgress.value = status.progress
+        
+        // 更新步骤
+        if (status.status === 'geocoding') {
+          planStep.value = 1
+          planProgressText.value = '获取城市坐标...'
+        } else if (status.status === 'distance') {
+          planStep.value = 2
+          planProgressText.value = '计算景点间距离...'
+        } else if (status.status === 'planning') {
+          planStep.value = 3
+          planProgressText.value = status.message || 'AI 正在规划最佳路线...'
+        } else if (status.status === 'saving') {
+          planStep.value = 4
+          planProgressText.value = '保存结果...'
+        } else if (status.status === 'completed') {
+          clearInterval(pollInterval)
+          planStep.value = 4
+          planProgressText.value = '规划完成！'
+          
+          // 保存规划结果
+          routeData.value = status.result
 
-    // 在地图上绘制路线
-    if (mapRef.value && result.route) {
-      mapRef.value.drawRoute(result.route)
-    }
+          // 在地图上绘制路线
+          if (mapRef.value && status.result) {
+            mapRef.value.drawRoute(status.result)
+          }
 
-    await new Promise(r => setTimeout(r, 500))
-    showPlanDialog.value = false
-    ElMessage.success('行程规划完成！')
+          setTimeout(() => {
+            showPlanDialog.value = false
+            ElMessage.success('行程规划完成！')
+          }, 500)
+          
+          planning.value = false
+        } else if (status.status === 'failed') {
+          clearInterval(pollInterval)
+          showPlanDialog.value = false
+          ElMessage.error('规划失败: ' + (status.error || '未知错误'))
+          planning.value = false
+        }
+      } catch (e) {
+        console.error('Poll error:', e)
+      }
+    }, 2000) // 每2秒轮询一次
+
   } catch (error) {
     showPlanDialog.value = false
-    ElMessage.error('规划失败: ' + (error.message || '未知错误'))
-  } finally {
+    ElMessage.error('启动规划失败: ' + (error.message || '未知错误'))
     planning.value = false
   }
 }
