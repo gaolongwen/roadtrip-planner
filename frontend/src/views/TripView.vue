@@ -663,6 +663,29 @@ async function loadTrip(tripId) {
     
     // 从 localStorage 恢复规划信息
     loadPlanFromLocalStorage(tripId)
+    
+    // 获取已规划的路线
+    try {
+      const routeResult = await tripApi.getRoute(tripId)
+      if (routeResult.route && routeResult.route.data) {
+        routeData.value = routeResult.route.data
+        
+        // 恢复规划表单
+        planForm.value.startCity = routeResult.route.start_city || ''
+        planForm.value.endCity = routeResult.route.end_city || ''
+        planForm.value.days = routeResult.route.total_days || 3
+        
+        // 地图上绘制路线
+        if (mapRef.value && routeResult.route.data) {
+          // 等地图加载完成
+          setTimeout(() => {
+            mapRef.value.drawRoute(routeResult.route.data)
+          }, 500)
+        }
+      }
+    } catch (e) {
+      // 没有路线数据，忽略
+    }
   } catch (error) {
     ElMessage.error('加载行程失败')
     router.push('/trip')
