@@ -80,3 +80,22 @@ class TripRoute(Base):
     route_data = Column(Text, comment="JSON字符串，存储每日行程")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+
+class POIDistance(Base):
+    """景点间距离缓存表"""
+    __tablename__ = "poi_distances"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    poi1_id = Column(Integer, nullable=False, index=True, comment="景点1 ID")
+    poi2_id = Column(Integer, nullable=False, index=True, comment="景点2 ID")
+    distance = Column(Integer, comment="驾车距离（米）")
+    duration = Column(Integer, comment="驾车时长（秒）")
+    source = Column(String(20), default="amap", comment="数据来源: amap/estimate")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+    __table_args__ = (
+        # 唯一约束：两点之间只存一条记录（双向距离相同）
+        # MySQL: {'mysql_engine': 'InnoDB', 'mysql_charset': 'utf8mb4'}
+    )
