@@ -173,12 +173,26 @@
               <div class="day-card" v-for="day in routeData.days" :key="day.day">
                 <div class="day-header">
                   <span class="day-number">第{{ day.day }}天</span>
+                  <span class="day-time" v-if="day.total_time">⏱️ {{ day.total_time }}小时</span>
                 </div>
-                <div class="day-route">{{ day.route || '待规划' }}</div>
+                <div class="day-route" v-if="day.route">{{ day.route }}</div>
+                <div class="day-cities" v-if="day.start_city || day.stay_city">
+                  <span v-if="day.start_city">📍 从 {{ day.start_city }}</span>
+                  <span v-if="day.stay_city"> → 🏨 住宿 {{ day.stay_city }}</span>
+                </div>
                 <div class="day-pois" v-if="day.pois && day.pois.length">
-                  <el-tag v-for="poi in day.pois" :key="poi" size="small" style="margin: 2px">{{ poi }}</el-tag>
+                  <el-tag v-for="poi in day.pois" :key="poi.name || poi" size="small" style="margin: 2px">
+                    {{ poi.name || poi }} <span v-if="poi.visit_hours">({{ poi.visit_hours }}h)</span>
+                  </el-tag>
+                </div>
+                <div class="day-stats" v-if="day.drive_time || day.visit_time">
+                  <span v-if="day.drive_time">🚗 驾车{{ day.drive_time }}分钟</span>
+                  <span v-if="day.visit_time">🎭 游玩{{ day.visit_time }}小时</span>
                 </div>
                 <div class="day-desc" v-if="day.description">{{ day.description }}</div>
+              </div>
+              <div class="route-summary" v-if="routeData.route_summary">
+                <strong>路线概览：</strong>{{ routeData.route_summary }}
               </div>
             </div>
           </div>
@@ -1072,6 +1086,7 @@ onMounted(async () => {
 .day-card .day-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 6px;
 }
 
@@ -1081,9 +1096,21 @@ onMounted(async () => {
   font-size: 13px;
 }
 
+.day-card .day-time {
+  font-size: 12px;
+  color: #e6a23c;
+}
+
 .day-card .day-route {
   font-size: 12px;
   color: #606266;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.day-card .day-cities {
+  font-size: 11px;
+  color: #909399;
   margin-bottom: 6px;
 }
 
@@ -1091,10 +1118,29 @@ onMounted(async () => {
   margin-bottom: 6px;
 }
 
+.day-card .day-stats {
+  font-size: 11px;
+  color: #67c23a;
+  margin-bottom: 6px;
+}
+
+.day-card .day-stats span {
+  margin-right: 10px;
+}
+
 .day-card .day-desc {
   font-size: 11px;
   color: #909399;
   line-height: 1.4;
+}
+
+.route-summary {
+  margin-top: 12px;
+  padding: 10px;
+  background: #fdf6ec;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #e6a23c;
 }
 
 /* 规划进度对话框 */

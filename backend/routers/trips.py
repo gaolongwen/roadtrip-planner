@@ -386,43 +386,86 @@ async def get_city_location(city_name: str) -> tuple:
     return None
 
 
-async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, distances: dict) -> dict:
+async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, distance_matrix: dict, poi_coords: dict) -> dict:
     """调用 LLM 规划路线"""
     if not OPENAI_API_KEY:
-        # 返回默认规划结果
         return generate_default_plan(pois, start_city, end_city, days)
 
-    # 构建提示词
-    poi_info = []
+    # 构建景点详情
+    poi_details = []
     for poi in pois:
-        poi_info.append(f"- {poi['name']} ({poi['city']}, 游玩时长约{poi.get('duration', 2)}小时)")
+        poi_details.append({
+            "name": poi['name'],
+            "city": poi['city'],
+            "visit_hours": poi.get('duration', 2),
+            "coords": poi_coords.get(poi['name'], {})
+        })
 
-    prompt = f"""你是一个自驾行程规划专家。请根据以下信息规划{days}天的自驾行程：
+    # 构建距离矩阵文本
+    distance_text = "景点间驾车时间（分钟）：\n"
+    for (p1, p2), info in distance_matrix.items():
+        distance_text += f"  {p1} → {p2}: {info['duration']//60}分钟 ({info['distance']//1000}公里)\n"
 
-起点城市：{start_city}
-终点城市：{end_city}
-总天数：{days}天
+    prompt = f"""你是一个专业的自驾行程规划专家。请根据以下信息规划{days}天的自驾行程。
 
-可选景点：
-{chr(10).join(poi_info)}
+## 基本要求（必须严格遵守）
 
-请按照以下JSON格式返回规划结果（只返回JSON，不要其他内容）：
+1. **路线连续性**：前一天结束地点 = 后一天起点，不能跳跃
+2. **时间控制**：每天游玩时间 + 驾车时间 = 8-10小时（不能超过10小时）
+3. **顺路规划**：避免来回绕路，保证每天路线基本是一条直线或弧线
+4. **住宿安排**：每天行程结束后需要在附近城市住宿，必须明确标注住宿城市
+
+## 行程信息
+
+- **起点城市**：{start_city}
+- **终点城市**：{end_city}
+- **总天数**：{days}天
+
+## 景点列表
+
+{json.dumps(poi_details, ensure_ascii=False, indent=2)}
+
+## 景点间距离矩阵
+
+{distance_text}
+
+## 输出格式（严格按此JSON格式）
+
+```json
 {{
-    "days": [
-        {{
-            "day": 1,
-            "route": "起点 -> 景点1 -> 景点2",
-            "pois": ["景点名称1", "景点名称2"],
-            "description": "当天行程描述"
-        }}
-    ],
-    "total_distance": "预估总里程",
-    "suggestions": "行程建议"
+  "days": [
+    {{
+      "day": 1,
+      "start_city": "大同",
+      "pois": [
+        {{"name": "云冈石窟", "visit_hours": 3}},
+        {{"name": "华严寺", "visit_hours": 2}}
+      ],
+      "stay_city": "应县",
+      "route": "大同 → 云冈石窟 → 华严寺 → 应县",
+      "drive_time": 120,
+      "visit_time": 5,
+      "total_time": 7,
+      "description": "第一天从大同出发，上午游览云冈石窟（3小时），下午参观华严寺（2小时），傍晚驱车前往应县住宿"
+    }}
+  ],
+  "route_summary": "大同出发，途经应县、五台山、太原，最终到达郑州",
+  "total_distance": "约800公里",
+  "suggestions": "建议每天早起出发，预留充足时间游览"
 }}
-"""
+```
+
+## 规划原则
+
+1. **距离优先**：优先安排相邻距离近的景点在同一天
+2. **时间平衡**：每天总时间尽量均衡，避免某天过紧或过松
+3. **住宿便利**：住宿城市选择当天最后一个景点附近的大城市或县城
+4. **灵活性**：如果景点数量不足以填满所有天数，可以适当放慢节奏
+
+请只返回JSON，不要添加任何解释文字。"""
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=90) as client:
             response = await client.post(
                 f"{OPENAI_BASE_URL}/chat/completions",
                 headers={
@@ -432,19 +475,28 @@ async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, d
                 json={
                     "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7
+                    "temperature": 0.3,  # 降低随机性，更稳定
+                    "max_tokens": 2000
                 }
             )
 
             if response.status_code == 200:
                 result = response.json()
                 content = result["choices"][0]["message"]["content"]
+                
                 # 提取 JSON
                 if "```json" in content:
                     content = content.split("```json")[1].split("```")[0]
                 elif "```" in content:
                     content = content.split("```")[1].split("```")[0]
-                return json.loads(content.strip())
+                
+                plan = json.loads(content.strip())
+                
+                # 确保返回格式正确
+                if "days" not in plan:
+                    plan = {"days": plan.get("days", []), "route_summary": "", "suggestions": ""}
+                
+                return plan
     except Exception as e:
         print(f"LLM API error: {e}")
 
@@ -453,7 +505,12 @@ async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, d
 
 def generate_default_plan(pois: list, start_city: str, end_city: str, days: int) -> dict:
     """生成默认规划（当 LLM 不可用时）"""
-    result = {"days": [], "total_distance": "未知", "suggestions": "建议根据实际情况调整行程"}
+    result = {
+        "days": [],
+        "route_summary": f"{start_city}出发，最终到达{end_city}",
+        "total_distance": "未知",
+        "suggestions": "建议根据实际情况调整行程"
+    }
 
     if not pois:
         return result
@@ -471,26 +528,40 @@ def generate_default_plan(pois: list, start_city: str, end_city: str, days: int)
 
     day_plans = []
     current_pois = []
+    current_city = start_city
     day_num = 1
 
     for poi in pois:
-        current_pois.append(poi["name"])
+        current_pois.append({"name": poi["name"], "visit_hours": poi.get("duration", 2)})
+        
         if len(current_pois) >= pois_per_day and day_num <= days:
+            stay_city = poi.get("city", current_city)
             day_plans.append({
                 "day": day_num,
-                "route": f"第{day_num}天行程",
+                "start_city": current_city,
                 "pois": current_pois.copy(),
-                "description": f"游览{len(current_pois)}个景点"
+                "stay_city": stay_city,
+                "route": f"{current_city} → " + " → ".join([p["name"] for p in current_pois]) + f" → {stay_city}",
+                "drive_time": 60,
+                "visit_time": sum(p["visit_hours"] for p in current_pois),
+                "total_time": sum(p["visit_hours"] for p in current_pois) + 1,
+                "description": f"游览{len(current_pois)}个景点，住宿{stay_city}"
             })
+            current_city = stay_city
             current_pois = []
             day_num += 1
 
     if current_pois and day_num <= days:
         day_plans.append({
             "day": day_num,
-            "route": f"第{day_num}天行程",
+            "start_city": current_city,
             "pois": current_pois,
-            "description": f"游览{len(current_pois)}个景点"
+            "stay_city": end_city,
+            "route": f"{current_city} → " + " → ".join([p["name"] for p in current_pois]) + f" → {end_city}",
+            "drive_time": 60,
+            "visit_time": sum(p["visit_hours"] for p in current_pois),
+            "total_time": sum(p["visit_hours"] for p in current_pois) + 1,
+            "description": f"游览{len(current_pois)}个景点，抵达终点{end_city}"
         })
 
     result["days"] = day_plans
@@ -537,19 +608,45 @@ async def plan_trip_route(
     start_loc = await get_city_location(start_city)
     end_loc = await get_city_location(end_city)
 
-    # 计算景点间距离（简化版本，只计算关键距离）
-    distances = {}
-    if start_loc and poi_list:
-        distances["start_to_first"] = await get_driving_distance(
-            f"{start_loc[0]},{start_loc[1]}",
-            f"{poi_list[0]['longitude']},{poi_list[0]['latitude']}"
-        )
+    # 构建景点坐标映射
+    poi_coords = {p["name"]: {"lng": p["longitude"], "lat": p["latitude"]} for p in poi_list}
+
+    # 计算所有景点之间的距离矩阵
+    distance_matrix = {}
+    
+    # 计算起点到各景点的距离
+    if start_loc:
+        for poi in poi_list:
+            key = (start_city, poi["name"])
+            distance_matrix[key] = await get_driving_distance(
+                f"{start_loc[0]},{start_loc[1]}",
+                f"{poi['longitude']},{poi['latitude']}"
+            )
+
+    # 计算景点之间的距离
+    for i, poi1 in enumerate(poi_list):
+        for j, poi2 in enumerate(poi_list):
+            if i != j:
+                key = (poi1["name"], poi2["name"])
+                if key not in distance_matrix:
+                    distance_matrix[key] = await get_driving_distance(
+                        f"{poi1['longitude']},{poi1['latitude']}",
+                        f"{poi2['longitude']},{poi2['latitude']}"
+                    )
+
+    # 计算各景点到终点的距离
+    if end_loc:
+        for poi in poi_list:
+            key = (poi["name"], end_city)
+            distance_matrix[key] = await get_driving_distance(
+                f"{poi['longitude']},{poi['latitude']}",
+                f"{end_loc[0]},{end_loc[1]}"
+            )
 
     # 调用 LLM 规划
-    plan_result = await call_llm_plan(poi_list, start_city, end_city, days, distances)
+    plan_result = await call_llm_plan(poi_list, start_city, end_city, days, distance_matrix, poi_coords)
 
     # 添加景点坐标信息
-    poi_coords = {p["name"]: {"lng": p["longitude"], "lat": p["latitude"]} for p in poi_list}
     plan_result["poi_coords"] = poi_coords
     plan_result["start_city"] = start_city
     plan_result["end_city"] = end_city
