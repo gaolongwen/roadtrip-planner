@@ -31,6 +31,11 @@
         />
       </div>
       
+      <div class="poi-info" v-if="poi.duration">
+        <el-icon><Clock /></el-icon>
+        <span>建议游玩 <strong>{{ poi.duration }}</strong> 小时</span>
+      </div>
+      
       <div class="poi-info">
         <el-icon><CollectionTag /></el-icon>
         <el-tag size="small">{{ poi.category || '未分类' }}</el-tag>
@@ -79,7 +84,7 @@
 </template>
 
 <script setup>
-import { Close, Location, Star, CollectionTag, Link, TopRight, MapLocation, Edit, Plus, Check } from '@element-plus/icons-vue'
+import { Close, Location, Star, CollectionTag, Link, TopRight, MapLocation, Edit, Plus, Check, Clock } from '@element-plus/icons-vue'
 
 defineProps({
   poi: {
