@@ -17,7 +17,17 @@
       
       <div class="poi-info">
         <el-icon><Location /></el-icon>
-        <span>{{ poi.address || '暂无地址' }}</span>
+        <span class="location-text">
+          <strong v-if="poi.city">{{ poi.city }}</strong>
+          <span v-if="poi.city && poi.district"> · </span>
+          <span v-if="poi.district">{{ poi.district }}</span>
+          <span v-if="!poi.city && !poi.district">未知地区</span>
+        </span>
+      </div>
+      
+      <div class="poi-info" v-if="poi.address">
+        <el-icon><MapLocation /></el-icon>
+        <span>{{ poi.address }}</span>
       </div>
       
       <div class="poi-info" v-if="poi.rating">
@@ -56,7 +66,7 @@
       </div>
       
       <div class="poi-coords">
-        <el-icon><MapLocation /></el-icon>
+        <el-icon><Aim /></el-icon>
         <span>{{ poi.longitude?.toFixed(4) }}°E, {{ poi.latitude?.toFixed(4) }}°N</span>
       </div>
     </div>
@@ -84,7 +94,7 @@
 </template>
 
 <script setup>
-import { Close, Location, Star, CollectionTag, Link, TopRight, MapLocation, Edit, Plus, Check, Clock } from '@element-plus/icons-vue'
+import { Close, Location, Star, CollectionTag, Link, TopRight, MapLocation, Edit, Plus, Check, Clock, Aim } from '@element-plus/icons-vue'
 
 defineProps({
   poi: {
@@ -151,6 +161,15 @@ const handleImageError = (e) => {
   font-size: 14px;
   color: #606266;
   flex-wrap: wrap;
+}
+
+.location-text {
+  font-size: 15px;
+}
+
+.location-text strong {
+  color: #303133;
+  font-weight: 600;
 }
 
 .poi-description {
