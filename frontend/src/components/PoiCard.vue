@@ -57,10 +57,19 @@
     </div>
     
     <div class="poi-actions">
-      <el-button type="primary" size="small" @click="$emit('navigate', poi)">
-        <el-icon><Position /></el-icon>
-        导航
+      <!-- 加入行程按钮 -->
+      <el-button
+        v-if="showAddToTrip"
+        :type="isAdded ? 'info' : 'primary'"
+        size="small"
+        :disabled="isAdded"
+        @click="!isAdded && $emit('add-to-trip', poi)"
+      >
+        <el-icon v-if="isAdded"><Check /></el-icon>
+        <el-icon v-else><Plus /></el-icon>
+        {{ isAdded ? '已添加' : '加入行程' }}
       </el-button>
+      <!-- 编辑按钮 -->
       <el-button size="small" @click="$emit('edit', poi)">
         <el-icon><Edit /></el-icon>
         编辑
@@ -70,14 +79,24 @@
 </template>
 
 <script setup>
+import { Close, Location, Star, CollectionTag, Link, TopRight, MapLocation, Edit, Plus, Check } from '@element-plus/icons-vue'
+
 defineProps({
   poi: {
     type: Object,
     default: null,
   },
+  showAddToTrip: {
+    type: Boolean,
+    default: false,
+  },
+  isAdded: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-defineEmits(['close', 'navigate', 'edit'])
+defineEmits(['close', 'add-to-trip', 'edit'])
 
 const handleImageError = (e) => {
   e.target.style.display = 'none'

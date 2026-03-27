@@ -1,5 +1,174 @@
 <template>
   <div class="trip-view">
+    <!-- 顶部导航栏 -->
+    <div class="top-nav">
+      <h1>🚗 自驾行程规划</h1>
+      <div class="nav-links">
+        <router-link to="/" class="nav-link">地图</router-link>
+        <router-link to="/trip" class="nav-link active">我的行程</router-link>
+        <template v-if="userStore.isLoggedIn">
+          <el-dropdown @command="handleUserCommand">
+            <span class="user-dropdown">
+              {{ userStore.nickname || '用户' }}
+              <el-icon><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+        <router-link v-else to="/login" class="nav-link">登录</router-link>
+      </div>
+    </div>
+
+    <!-- 行程信息栏 -->
+    <div class="trip-info-bar" v-if="currentTrip">
+      <div class="trip-info">
+        <h3>{{ currentTrip.name }}</h3>
+        <div class="share-info">
+          <span class="share-code">分享码: <strong>{{ currentTrip.share_code }}</strong></span>
+          <el-button text size="small" @click="copyShareCode">复制</el-button>
+        </div>
+      </div>
+      <div class="trip-members">
+        <el-tag v-for="member in currentTrip.members" :key="member.nickname" size="small">
+          {{ member.nickname }}
+        </el-tag>
+      </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="content-area">
+      <!-- 左侧面板：景点筛选 + 已添加景点 -->
+      <div class="left-panel">
+        <!-- 景点筛选 -->
+        <PoiFilter @filter="handleFilter" />
+        
+        <!-- 显示过滤复选框 -->
+        <div class="filter-checkbox">
+          <el-checkbox v-model="showOnlyAdded">只显示已添加景点</el-checkbox>
+        </div>
+
+        <!-- 已添加景点区域 -->
+        <div class="added-pois-panel" v-if="currentTrip && currentTrip.pois.length > 0">
+          <div class="panel-header" @click="addedPoisExpanded = !addedPoisExpanded">
+            <span class="panel-title">
+              <el-icon><LocationFilled /></el-icon>
+              已添加景点 ({{ currentTrip.pois.length }})
+            </span>
+            <el-icon class="expand-icon" :class="{ expanded: addedPoisExpanded }">
+              <ArrowDown v-if="!addedPoisExpanded" />
+              <ArrowUp v-else />
+            </el-icon>
+          </div>
+          <Transition name="collapse">
+            <div class="panel-content" v-show="addedPoisExpanded">
+              <div
+                v-for="poi in currentTrip.pois"
+                :key="poi.id"
+                class="added-poi-item"
+              >
+                <div class="poi-item-info">
+                  <span class="poi-item-name">{{ poi.name }}</span>
+                </div>
+                <el-button
+                  text
+                  size="small"
+                  type="danger"
+                  @click.stop="removePoi(poi.id)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+            </div>
+          </Transition>
+        </div>
+
+        <!-- 景点详情卡片 -->
+        <div class="poi-card-overlay" v-if="poiStore.selectedPoi">
+          <PoiCard
+            :poi="poiStore.selectedPoi"
+            :showAddToTrip="!!currentTrip"
+            :isAdded="addedPoiIds.has(poiStore.selectedPoi.id)"
+            @close="handleCloseCard"
+            @add-to-trip="handleAddToTrip"
+            @edit="handleEdit"
+          />
+        </div>
+      </div>
+
+      <!-- 地图 -->
+      <div class="map-container-wrapper">
+        <MapContainer
+          ref="mapRef"
+          :showOnlyAdded="showOnlyAdded"
+          :addedPoiIds="addedPoiIds"
+          @mapReady="handleMapReady"
+          @markerClick="handlePoiClick"
+        />
+      </div>
+
+      <!-- 右侧面板：行程规划 -->
+      <div class="right-panel">
+        <div class="planning-panel">
+          <div class="panel-title-bar">
+            <h4>行程规划面板</h4>
+          </div>
+          
+          <div class="planning-form">
+            <div class="form-item">
+              <label>起点</label>
+              <el-input 
+                v-model="planForm.startCity" 
+                placeholder="如：大同"
+                clearable
+              />
+            </div>
+            
+            <div class="form-item">
+              <label>终点</label>
+              <el-input 
+                v-model="planForm.endCity" 
+                placeholder="如：郑州"
+                clearable
+              />
+            </div>
+            
+            <div class="form-item">
+              <label>预计天数</label>
+              <el-input-number 
+                v-model="planForm.days" 
+                :min="1" 
+                :max="30"
+                controls-position="right"
+              />
+            </div>
+            
+            <div class="form-actions">
+              <el-button
+                type="primary"
+                @click="handlePlanTrip"
+                :disabled="!canPlan"
+                :loading="planning"
+              >
+                规划行程
+              </el-button>
+              <el-button
+                type="success"
+                @click="handleExportTrip"
+                :disabled="!hasRoute"
+                :loading="exporting"
+              >
+                导出行程
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 创建行程对话框 -->
     <el-dialog v-model="showCreateDialog" title="创建新行程" width="400px">
       <el-form :model="createForm">
@@ -19,9 +188,6 @@
         <el-form-item label="分享码">
           <el-input v-model="joinForm.shareCode" placeholder="输入6位分享码" maxlength="6" />
         </el-form-item>
-        <el-form-item label="你的昵称">
-          <el-input v-model="joinForm.nickname" placeholder="大家怎么称呼你" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showJoinDialog = false">取消</el-button>
@@ -29,103 +195,96 @@
       </template>
     </el-dialog>
 
-    <!-- 顶部工具栏 -->
-    <div class="toolbar">
-      <el-button type="primary" @click="showCreateDialog = true">
-        <el-icon><Plus /></el-icon>
-        创建行程
-      </el-button>
-      <el-button @click="showJoinDialog = true">
-        <el-icon><Link /></el-icon>
-        加入行程
-      </el-button>
-    </div>
+    <!-- 行程详情抽屉 -->
+    <el-drawer
+      v-model="showTripDrawer"
+      title="行程详情"
+      direction="rtl"
+      size="400px"
+    >
+      <template v-if="currentTrip">
+        <div class="drawer-header">
+          <div class="trip-name-row">
+            <h3>{{ currentTrip.name }}</h3>
+            <el-button text @click="showRenameDialog = true">
+              <el-icon><Edit /></el-icon>
+            </el-button>
+          </div>
+          <div class="share-info">
+            <span class="share-code">分享码: <strong>{{ currentTrip.share_code }}</strong></span>
+            <el-button text size="small" @click="copyShareCode">复制</el-button>
+            <el-button text size="small" @click="copyShareLink">复制链接</el-button>
+          </div>
+        </div>
 
-    <!-- 主内容区 -->
-    <div class="main-content">
-      <!-- 左侧：地图 -->
-      <div class="map-section">
-        <MapContainer
-          ref="mapRef"
-          @poi-click="handlePoiClick"
-          @poi-add="handlePoiAdd"
-        />
-      </div>
-
-      <!-- 右侧：行程面板 -->
-      <div class="trip-panel">
-        <el-card v-if="!currentTrip" class="empty-trip">
-          <el-empty description="创建或加入行程开始规划">
-            <el-button type="primary" @click="showCreateDialog = true">创建行程</el-button>
-          </el-empty>
-        </el-card>
-
-        <el-card v-else class="trip-card">
-          <template #header>
-            <div class="trip-header">
-              <div>
-                <h3>{{ currentTrip.name }}</h3>
-                <div class="share-info">
-                  <span class="share-code">分享码: <strong>{{ currentTrip.share_code }}</strong></span>
-                  <el-button text size="small" @click="copyShareLink">复制链接</el-button>
-                </div>
-              </div>
-              <el-button text @click="showRenameDialog = true">
-                <el-icon><Edit /></el-icon>
-              </el-button>
-            </div>
-          </template>
-
-          <!-- 成员列表 -->
-          <div class="members-section">
+        <!-- 成员列表 -->
+        <div class="members-section">
+          <h4>成员</h4>
+          <div class="member-list">
             <el-tag v-for="member in currentTrip.members" :key="member.nickname" size="small">
               {{ member.nickname }}
             </el-tag>
-            <el-button text size="small" @click="showNicknameDialog = true">
-              <el-icon><Plus /></el-icon>
-            </el-button>
           </div>
+        </div>
 
-          <!-- 景点列表（按天分组） -->
-          <div class="pois-section">
-            <div v-for="day in days" :key="day.dayNumber" class="day-group">
-              <div class="day-header">
-                <h4>第{{ day.dayNumber }}天</h4>
-                <el-tag size="small">{{ day.pois.length }}个景点</el-tag>
-              </div>
-              <draggable
-                :list="day.pois"
-                group="pois"
-                item-key="id"
-                @end="onPoiDragEnd"
-                class="poi-list"
-              >
-                <template #item="{ element }">
-                  <div class="poi-item">
-                    <div class="poi-info">
-                      <span class="poi-name">{{ element.name }}</span>
-                      <el-tag v-if="element.added_by" size="small" type="info">{{ element.added_by }}</el-tag>
-                    </div>
-                    <el-button text size="small" @click="removePoi(element.id)">
-                      <el-icon><Delete /></el-icon>
-                    </el-button>
-                  </div>
-                </template>
-              </draggable>
+        <!-- 景点列表（按天分组） -->
+        <div class="pois-section">
+          <h4>已添加景点</h4>
+          <div v-for="day in days" :key="day.dayNumber" class="day-group">
+            <div class="day-header">
+              <span>第{{ day.dayNumber }}天</span>
+              <el-tag size="small">{{ day.pois.length }}个景点</el-tag>
             </div>
-
-            <el-empty v-if="currentTrip.pois.length === 0" description="点击地图上的景点添加" />
+            <draggable
+              :list="day.pois"
+              group="pois"
+              item-key="id"
+              @end="onPoiDragEnd"
+              class="poi-drag-list"
+            >
+              <template #item="{ element }">
+                <div class="poi-drag-item">
+                  <div class="poi-info">
+                    <span class="poi-name">{{ element.name }}</span>
+                    <el-tag v-if="element.added_by" size="small" type="info">{{ element.added_by }}</el-tag>
+                  </div>
+                  <el-button text size="small" @click="removePoi(element.id)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </div>
+              </template>
+            </draggable>
           </div>
 
-          <!-- 操作按钮 -->
-          <div class="trip-actions">
-            <el-button type="primary" @click="exportTrip">
-              <el-icon><Download /></el-icon>
-              导出行程
-            </el-button>
-          </div>
-        </el-card>
-      </div>
+          <el-empty v-if="currentTrip.pois.length === 0" description="点击地图上的景点添加" />
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="trip-actions">
+          <el-button type="primary" @click="exportTrip">
+            <el-icon><Download /></el-icon>
+            导出行程
+          </el-button>
+        </div>
+      </template>
+
+      <template v-else>
+        <el-empty description="创建或加入行程开始规划">
+          <el-button type="primary" @click="showCreateDialog = true">创建行程</el-button>
+          <el-button @click="showJoinDialog = true">加入行程</el-button>
+        </el-empty>
+      </template>
+    </el-drawer>
+
+    <!-- 底部浮动按钮 -->
+    <div class="floating-actions">
+      <el-button type="primary" circle @click="showTripDrawer = true" v-if="currentTrip">
+        <el-icon><List /></el-icon>
+      </el-button>
+      <el-button type="primary" @click="showCreateDialog = true" v-else>
+        <el-icon><Plus /></el-icon>
+        创建行程
+      </el-button>
     </div>
 
     <!-- 重命名对话框 -->
@@ -136,50 +295,101 @@
         <el-button type="primary" @click="renameTrip">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- 设置昵称对话框 -->
-    <el-dialog v-model="showNicknameDialog" title="设置昵称" width="400px">
-      <el-input v-model="nickname" placeholder="你的昵称" />
-      <template #footer>
-        <el-button @click="showNicknameDialog = false">取消</el-button>
-        <el-button type="primary" @click="setNickname">确定</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Plus, Link, Edit, Delete, Download, Refresh, Loading, List, ArrowDown, ArrowUp, LocationFilled } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import MapContainer from '@/components/MapContainer.vue'
+import PoiFilter from '@/components/PoiFilter.vue'
+import PoiCard from '@/components/PoiCard.vue'
+import { usePoiStore } from '../stores/poi'
+import { useUserStore } from '../stores/user'
 import { tripApi } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
+const poiStore = usePoiStore()
+const userStore = useUserStore()
 
 // 状态
 const showCreateDialog = ref(false)
 const showJoinDialog = ref(false)
 const showRenameDialog = ref(false)
-const showNicknameDialog = ref(false)
+const showTripDrawer = ref(false)
+const addedPoisExpanded = ref(true) // 已添加景点面板默认展开
 
 const creating = ref(false)
 const joining = ref(false)
 
 const createForm = ref({ name: '' })
-const joinForm = ref({ shareCode: '', nickname: '' })
+const joinForm = ref({ shareCode: '' })
 const newName = ref('')
-const nickname = ref(localStorage.getItem('trip_nickname') || '')
+
+// 行程规划表单
+const planForm = ref({
+  startCity: '',
+  endCity: '',
+  days: 3
+})
+
+// 规划状态
+const planning = ref(false)
+const exporting = ref(false)
+const routeData = ref(null)
+
+// localStorage 存储相关
+const getPlanStorageKey = (tripId) => `trip_plan_info_${tripId}`
+
+const savePlanToLocalStorage = () => {
+  if (!currentTrip.value) return
+  const key = getPlanStorageKey(currentTrip.value.trip_id)
+  localStorage.setItem(key, JSON.stringify({
+    startCity: planForm.value.startCity,
+    endCity: planForm.value.endCity,
+    days: planForm.value.days
+  }))
+}
+
+const loadPlanFromLocalStorage = (tripId) => {
+  const key = getPlanStorageKey(tripId)
+  const saved = localStorage.getItem(key)
+  if (saved) {
+    try {
+      const data = JSON.parse(saved)
+      planForm.value.startCity = data.startCity || ''
+      planForm.value.endCity = data.endCity || ''
+      planForm.value.days = data.days || 3
+    } catch (e) {
+      console.error('Failed to load plan from localStorage:', e)
+    }
+  }
+}
+
+// 监听表单变化，自动保存到 localStorage
+watch(
+  () => planForm.value,
+  () => {
+    if (currentTrip.value) {
+      savePlanToLocalStorage()
+    }
+  },
+  { deep: true }
+)
 
 const currentTrip = ref(null)
 const mapRef = ref(null)
+const mapReady = ref(false)
+const showOnlyAdded = ref(false) // 只显示已添加景点
 
 // 计算属性
 const days = computed(() => {
   if (!currentTrip.value) return []
-  
+
   const dayMap = {}
   currentTrip.value.pois.forEach(poi => {
     const day = poi.day_number || 1
@@ -188,27 +398,135 @@ const days = computed(() => {
     }
     dayMap[day].pois.push(poi)
   })
-  
+
   return Object.values(dayMap).sort((a, b) => a.dayNumber - b.dayNumber)
 })
 
-// 方法
+// 已添加景点的 ID 集合
+const addedPoiIds = computed(() => {
+  if (!currentTrip.value) return new Set()
+  return new Set(currentTrip.value.pois.map(p => p.id))
+})
+
+// 是否可以规划行程
+const canPlan = computed(() => {
+  return planForm.value.startCity && planForm.value.endCity && planForm.value.days > 0 && currentTrip.value && currentTrip.value.pois.length > 0
+})
+
+// 是否已有路线
+const hasRoute = computed(() => {
+  return routeData.value !== null
+})
+
+// 地图相关方法
+const handleMapReady = (map) => {
+  mapReady.value = true
+  console.log('Map is ready')
+}
+
+const handleFilter = async () => {
+  if (mapRef.value && mapReady.value) {
+    mapRef.value.refreshPoisInBounds()
+  } else {
+    await poiStore.fetchPois()
+  }
+}
+
+const refreshPois = () => {
+  if (mapRef.value && mapReady.value) {
+    mapRef.value.refreshPoisInBounds()
+  } else {
+    poiStore.fetchPois()
+  }
+}
+
+const handlePoiClick = (poi) => {
+  poiStore.selectPoi(poi)
+  if (mapRef.value && poi.longitude && poi.latitude) {
+    mapRef.value.panTo(poi.longitude, poi.latitude)
+  }
+}
+
+const handleCloseCard = () => {
+  poiStore.clearSelection()
+}
+
+const handleEdit = (poi) => {
+  console.log('Edit poi:', poi)
+}
+
+// 行程规划
+async function handlePlanTrip() {
+  if (!canPlan.value) {
+    ElMessage.warning('请填写起点、终点并添加景点')
+    return
+  }
+
+  planning.value = true
+  try {
+    const result = await tripApi.planTrip(
+      currentTrip.value.trip_id,
+      planForm.value.startCity,
+      planForm.value.endCity,
+      planForm.value.days
+    )
+
+    // 保存规划结果
+    routeData.value = result.route
+
+    // 在地图上绘制路线
+    if (mapRef.value && result.route) {
+      mapRef.value.drawRoute(result.route)
+    }
+
+    ElMessage.success('行程规划完成！')
+  } catch (error) {
+    ElMessage.error('规划失败: ' + (error.message || '未知错误'))
+  } finally {
+    planning.value = false
+  }
+}
+
+// 加入行程
+async function handleAddToTrip(poi) {
+  if (!currentTrip.value) {
+    ElMessage.warning('请先创建或加入行程')
+    showCreateDialog.value = true
+    return
+  }
+  
+  try {
+    await tripApi.addPoi(
+      currentTrip.value.trip_id,
+      poi.id,
+      1 // 默认第一天
+    )
+    
+    // 重新加载行程
+    await loadTrip(currentTrip.value.trip_id)
+    ElMessage.success('已添加到行程')
+  } catch (error) {
+    if (error.message && error.message.includes('已在行程中')) {
+      ElMessage.warning('景点已在行程中')
+    } else {
+      ElMessage.error('添加失败: ' + (error.message || '未知错误'))
+    }
+  }
+}
+
+// 行程相关方法
 async function createTrip() {
   creating.value = true
   try {
-    const trip = await tripApi.createTrip(createForm.value.name || '未命名行程')
+    const trip = await tripApi.createTrip(
+      createForm.value.name || '未命名行程'
+    )
     currentTrip.value = trip
     showCreateDialog.value = false
     createForm.value.name = ''
-    
-    // 加入行程
-    if (nickname.value) {
-      await tripApi.joinTrip(trip.trip_id, nickname.value)
-    }
-    
-    // 更新 URL
+
     router.push(`/trip/${trip.trip_id}`)
-    
+
     ElMessage.success('创建成功！分享码: ' + trip.share_code)
   } catch (error) {
     ElMessage.error('创建失败: ' + error.message)
@@ -225,23 +543,16 @@ async function joinTrip() {
   
   joining.value = true
   try {
-    // 获取行程 ID
     const { trip_id } = await tripApi.getTripByCode(joinForm.value.shareCode)
     
-    // 加入行程
-    if (joinForm.value.nickname) {
-      await tripApi.joinTrip(trip_id, joinForm.value.nickname)
-      localStorage.setItem('trip_nickname', joinForm.value.nickname)
-    }
+    await tripApi.joinTrip(trip_id)
     
-    // 加载行程详情
     const trip = await tripApi.getTrip(trip_id)
     currentTrip.value = trip
     
     showJoinDialog.value = false
-    joinForm.value = { shareCode: '', nickname: '' }
+    joinForm.value = { shareCode: '' }
     
-    // 更新 URL
     router.push(`/trip/${trip_id}`)
     
     ElMessage.success('加入成功！')
@@ -257,40 +568,15 @@ async function loadTrip(tripId) {
     const trip = await tripApi.getTrip(tripId)
     currentTrip.value = trip
     
-    // 显示选中的景点
     if (mapRef.value && trip.pois.length > 0) {
       mapRef.value.highlightPois(trip.pois.map(p => p.id))
     }
+    
+    // 从 localStorage 恢复规划信息
+    loadPlanFromLocalStorage(tripId)
   } catch (error) {
     ElMessage.error('加载行程失败')
-    router.push('/')
-  }
-}
-
-async function addPoiToTrip(poiId, dayNumber = 1) {
-  if (!currentTrip.value) {
-    ElMessage.warning('请先创建或加入行程')
-    return
-  }
-  
-  try {
-    await tripApi.addPoi(
-      currentTrip.value.trip_id,
-      poiId,
-      dayNumber,
-      '',
-      nickname.value || '匿名'
-    )
-    
-    // 重新加载行程
-    await loadTrip(currentTrip.value.trip_id)
-    ElMessage.success('添加成功')
-  } catch (error) {
-    if (error.message.includes('已在行程中')) {
-      ElMessage.warning('景点已在行程中')
-    } else {
-      ElMessage.error('添加失败')
-    }
+    router.push('/trip')
   }
 }
 
@@ -317,42 +603,61 @@ async function renameTrip() {
   }
 }
 
-function setNickname() {
-  if (nickname.value) {
-    localStorage.setItem('trip_nickname', nickname.value)
-    showNicknameDialog.value = false
-    ElMessage.success('昵称已保存')
+function copyShareLink() {
+  const link = `${window.location.origin}/trip/${currentTrip.value.trip_id}`
+  const text = `分享码: ${currentTrip.value.share_code}\n链接: ${link}`
+  navigator.clipboard.writeText(text)
+  ElMessage.success(`分享码 ${currentTrip.value.share_code} 已复制！`)
+}
+
+function copyShareCode() {
+  navigator.clipboard.writeText(currentTrip.value.share_code)
+  ElMessage.success(`分享码 ${currentTrip.value.share_code} 已复制！`)
+}
+
+async function exportTrip() {
+  if (!currentTrip.value || !routeData.value) {
+    ElMessage.warning('请先规划行程')
+    return
+  }
+
+  exporting.value = true
+  try {
+    const result = await tripApi.exportTrip(currentTrip.value.trip_id)
+
+    if (result.url) {
+      window.open(result.url, '_blank')
+      ElMessage.success('导出成功！')
+    } else if (result.preview) {
+      // 如果没有生成文档链接，显示预览
+      ElMessage.info(result.message || '导出预览')
+      console.log('导出预览:', result.preview)
+    }
+  } catch (error) {
+    ElMessage.error('导出失败: ' + (error.message || '未知错误'))
+  } finally {
+    exporting.value = false
   }
 }
 
-function copyShareLink() {
-  const link = `${window.location.origin}/trip/${currentTrip.value.trip_id}`
-  navigator.clipboard.writeText(link)
-  ElMessage.success('链接已复制: ' + currentTrip.value.share_code)
-}
-
-function exportTrip() {
-  // TODO: 导出行程为文本/图片
-  ElMessage.info('导出功能开发中...')
-}
-
-function handlePoiClick(poi) {
-  // 点击景点显示详情
-  console.log('Clicked POI:', poi)
-}
-
-function handlePoiAdd(poi) {
-  // 从地图添加景点到行程
-  addPoiToTrip(poi.id)
-}
-
 function onPoiDragEnd() {
-  // 拖拽排序后更新顺序
   // TODO: 调用 API 更新顺序
 }
 
+// 用户命令处理
+function handleUserCommand(command) {
+  if (command === 'logout') {
+    userStore.logout()
+    ElMessage.success('已退出登录')
+    router.push('/login')
+  }
+}
+
 // 生命周期
-onMounted(() => {
+onMounted(async () => {
+  // 加载景点数据
+  await poiStore.fetchPois()
+  
   // 从 URL 加载行程
   if (route.params.tripId) {
     loadTrip(route.params.tripId)
@@ -373,72 +678,316 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.toolbar {
+/* 顶部导航 */
+.top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 10px 20px;
   background: white;
   border-bottom: 1px solid #eee;
-  display: flex;
-  gap: 10px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.main-content {
+.top-nav h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 15px;
+}
+
+.nav-link {
+  color: #606266;
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 4px;
+}
+
+.nav-link:hover {
+  background: #f5f7fa;
+}
+
+.nav-link.active {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.user-dropdown {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 4px;
+  color: #606266;
+}
+
+.user-dropdown:hover {
+  background: #f5f7fa;
+}
+
+/* 行程信息栏 */
+.trip-info-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  background: white;
+  border-bottom: 1px solid #eee;
+}
+
+.trip-info-bar .trip-info h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.trip-info-bar .trip-info .share-info {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.trip-info-bar .trip-info .share-code strong {
+  color: #409eff;
+}
+
+.trip-info-bar .trip-members {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 主内容区 */
+.content-area {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
 
-.map-section {
+/* 左侧面板：景点筛选 + 已添加景点 */
+.left-panel {
+  width: 15%;
+  min-width: 200px;
+  max-width: 280px;
+  background: white;
+  border-right: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* 显示过滤复选框 */
+.filter-checkbox {
+  padding: 10px 15px;
+  border-bottom: 1px solid #eee;
+}
+
+/* 已添加景点面板 */
+.added-pois-panel {
+  background: white;
+  border-bottom: 1px solid #eee;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-header:hover {
+  background: #f5f7fa;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.expand-icon {
+  transition: transform 0.3s;
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.panel-content {
+  padding: 0 15px 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.added-poi-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.added-poi-item:last-child {
+  margin-bottom: 0;
+}
+
+.added-poi-item .poi-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.added-poi-item .poi-item-name {
+  font-size: 13px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 折叠动画 */
+.collapse-enter-active,
+.collapse-leave-active {
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.collapse-enter-from,
+.collapse-leave-to {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+
+/* 地图容器 */
+.map-container-wrapper {
   flex: 1;
   position: relative;
 }
 
-.trip-panel {
-  width: 360px;
-  background: #f5f7fa;
-  padding: 10px;
+/* 右侧面板：行程规划 */
+.right-panel {
+  width: 12%;
+  min-width: 180px;
+  max-width: 240px;
+  background: white;
+  border-left: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
 }
 
-.trip-card {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+/* 行程规划面板 */
+.planning-panel {
+  padding: 15px;
 }
 
-.trip-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.trip-header h3 {
-  margin: 0;
-}
-
-.share-info {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 5px;
-}
-
-.share-code strong {
-  color: #409eff;
-  font-size: 14px;
-}
-
-.members-section {
-  margin: 10px 0;
-  padding: 10px 0;
+.panel-title-bar {
+  margin-bottom: 20px;
+  padding-bottom: 10px;
   border-bottom: 1px solid #eee;
 }
 
-.members-section .el-tag {
-  margin-right: 5px;
+.panel-title-bar h4 {
+  margin: 0;
+  font-size: 16px;
+  color: #303133;
+}
+
+.planning-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-item label {
+  font-size: 14px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.form-item :deep(.el-input-number) {
+  width: 100%;
+}
+
+.form-actions {
+  margin-top: 10px;
+}
+
+.form-actions .el-button {
+  width: 100%;
+}
+
+/* 景点详情卡片 */
+.poi-card-overlay {
+  padding: 10px;
+}
+
+/* 浮动按钮 */
+.floating-actions {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 200;
+}
+
+/* 抽屉样式 */
+.drawer-header {
+  margin-bottom: 20px;
+}
+
+.trip-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trip-name-row h3 {
+  margin: 0;
+}
+
+.members-section {
+  margin-bottom: 20px;
+}
+
+.members-section h4 {
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: #606266;
+}
+
+.member-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .pois-section {
   flex: 1;
-  overflow-y: auto;
+}
+
+.pois-section h4 {
+  margin-bottom: 15px;
+  font-size: 14px;
+  color: #606266;
 }
 
 .day-group {
@@ -450,17 +999,14 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  font-weight: 500;
 }
 
-.day-header h4 {
-  margin: 0;
-}
-
-.poi-list {
+.poi-drag-list {
   min-height: 50px;
 }
 
-.poi-item {
+.poi-drag-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -469,28 +1015,22 @@ onMounted(() => {
   border-radius: 4px;
   margin-bottom: 5px;
   cursor: move;
+  border: 1px solid #eee;
 }
 
-.poi-info {
+.poi-drag-item .poi-info {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.poi-name {
+.poi-drag-item .poi-name {
   font-size: 14px;
 }
 
 .trip-actions {
-  margin-top: 15px;
-  padding-top: 15px;
+  margin-top: 20px;
+  padding-top: 20px;
   border-top: 1px solid #eee;
-}
-
-.empty-trip {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 </style>

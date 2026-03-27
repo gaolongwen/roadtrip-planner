@@ -1,6 +1,17 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False, comment="用户名")
+    password_hash = Column(String(255), nullable=False, comment="密码哈希")
+    nickname = Column(String(50), comment="昵称")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
 
 
 class POI(Base):
@@ -55,4 +66,17 @@ class TripMember(Base):
 
     trip_id = Column(String(36), primary_key=True, comment="行程ID")
     nickname = Column(String(100), primary_key=True, comment="昵称")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="关联用户ID")
     joined_at = Column(DateTime, default=datetime.utcnow, comment="加入时间")
+
+
+class TripRoute(Base):
+    __tablename__ = "trip_routes"
+
+    trip_id = Column(String(36), primary_key=True, comment="行程ID")
+    start_city = Column(String(100), comment="起点城市")
+    end_city = Column(String(100), comment="终点城市")
+    total_days = Column(Integer, comment="总天数")
+    route_data = Column(Text, comment="JSON字符串，存储每日行程")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")

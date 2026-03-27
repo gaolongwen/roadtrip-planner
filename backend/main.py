@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import engine, Base
-from routers import pois, trips
+from routers import pois, trips, auth
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
@@ -25,6 +25,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(pois.router)
 app.include_router(trips.router)
+app.include_router(auth.router)
 
 
 @app.get("/")

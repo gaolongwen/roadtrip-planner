@@ -6,6 +6,20 @@
       <div class="nav-links">
         <router-link to="/" class="nav-link">地图</router-link>
         <router-link to="/trip" class="nav-link">我的行程</router-link>
+        <template v-if="userStore.isLoggedIn">
+          <el-dropdown @command="handleUserCommand">
+            <span class="user-dropdown">
+              {{ userStore.nickname || '用户' }}
+              <el-icon><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+        <router-link v-else to="/login" class="nav-link">登录</router-link>
       </div>
     </div>
     
@@ -78,12 +92,18 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { usePoiStore } from '../stores/poi'
+import { useUserStore } from '../stores/user'
+import { Refresh, Loading, ArrowDown } from '@element-plus/icons-vue'
 import MapContainer from '../components/MapContainer.vue'
 import PoiCard from '../components/PoiCard.vue'
 import PoiFilter from '../components/PoiFilter.vue'
 
+const router = useRouter()
 const poiStore = usePoiStore()
+const userStore = useUserStore()
 const mapRef = ref(null)
 const mapReady = ref(false)
 
@@ -141,6 +161,15 @@ const handleEdit = (poi) => {
   // TODO: 实现编辑功能
 }
 
+// 用户命令处理
+const handleUserCommand = (command) => {
+  if (command === 'logout') {
+    userStore.logout()
+    ElMessage.success('已退出登录')
+    router.push('/login')
+  }
+}
+
 onMounted(() => {
   // 初始加载景点
   poiStore.fetchPois()
@@ -188,6 +217,20 @@ onMounted(() => {
 .nav-link.router-link-active {
   color: #409eff;
   background: #ecf5ff;
+}
+
+.user-dropdown {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 4px;
+  color: #606266;
+}
+
+.user-dropdown:hover {
+  background: #f5f7fa;
 }
 
 .content-area {

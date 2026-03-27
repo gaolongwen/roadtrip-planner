@@ -8,14 +8,70 @@ const api = axios.create({
   },
 })
 
+// 请求拦截器 - 自动带上 Authorization header
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
 // 响应拦截器
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
     console.error('API Error:', error)
+    
+    // 401 错误时清除 token 并跳转登录页
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      // 如果不在登录页，跳转到登录页
+      if (window.location.hash !== '#/login') {
+        window.location.hash = '/login'
+      }
+    }
+    
     return Promise.reject(error)
   }
 )
+
+// 认证相关 API
+export const authApi = {
+  // 登录
+  login(username, password) {
+    const formData = new FormData()
+    formData.append('username', username)
+    formData.append('password', password)
+    return api.post('/api/auth/login', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  // 注册
+  register(username, password, nickname = '') {
+    const formData = new FormData()
+    formData.append('username', username)
+    formData.append('password', password)
+    if (nickname) {
+      formData.append('nickname', nickname)
+    }
+    return api.post('/api/auth/register', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  // 获取当前用户信息
+  getMe() {
+    return api.get('/api/auth/me')
+  },
+}
 
 // 景点相关 API
 export const poiApi = {
@@ -47,7 +103,11 @@ export const poiApi = {
 export const tripApi = {
   // 创建行程
   createTrip(name = '未命名行程') {
-    return api.post(`/api/trips?name=${encodeURIComponent(name)}`)
+    const formData = new FormData()
+    formData.append('name', name)
+    return api.post('/api/trips', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
   },
 
   // 获取行程详情
@@ -66,8 +126,8 @@ export const tripApi = {
   },
 
   // 添加景点到行程
-  addPoi(tripId, poiId, dayNumber = 1, notes = '', nickname = '匿名') {
-    const params = new URLSearchParams({ poi_id: poiId, day_number: dayNumber, notes, nickname })
+  addPoi(tripId, poiId, dayNumber = 1, notes = '') {
+    const params = new URLSearchParams({ poi_id: poiId, day_number: dayNumber, notes })
     return api.post(`/api/trips/${tripId}/pois?${params}`)
   },
 
@@ -86,14 +146,35 @@ export const tripApi = {
   },
 
   // 加入行程
-  joinTrip(tripId, nickname) {
-    const params = new URLSearchParams({ nickname })
+  joinTrip(tripId) {
+    const params = new URLSearchParams()
     return api.post(`/api/trips/${tripId}/members?${params}`)
   },
 
   // 获取成员列表
   getMembers(tripId) {
     return api.get(`/api/trips/${tripId}/members`)
+  },
+
+  // 规划行程路线
+  planTrip(tripId, startCity, endCity, days) {
+    const formData = new FormData()
+    formData.append('start_city', startCity)
+    formData.append('end_city', endCity)
+    formData.append('days', days)
+    return api.post(`/api/trips/${tripId}/plan`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  // 获取行程路线
+  getRoute(tripId) {
+    return api.get(`/api/trips/${tripId}/route`)
+  },
+
+  // 导出行程
+  exportTrip(tripId) {
+    return api.post(`/api/trips/${tripId}/export`)
   },
 }
 

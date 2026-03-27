@@ -56,12 +56,14 @@ export const usePoiStore = defineStore('poi', () => {
     loading.value = true
     try {
       const filterParams = buildFilterParams()
-      const data = await poiApi.getPoisInBbox(minLng, maxLng, minLat, maxLat, filterParams)
+      // 注意：API 方法参数顺序是 (minLat, maxLat, minLng, maxLng, params)
+      const data = await poiApi.getPoisByBbox(minLat, maxLat, minLng, maxLng, filterParams)
       pois.value = data || []
       return data
     } catch (error) {
       console.error('Failed to fetch pois in bbox:', error)
-      pois.value = []
+      // 不要在错误时清空已有数据
+      // pois.value = []
     } finally {
       loading.value = false
     }
