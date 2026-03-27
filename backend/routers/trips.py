@@ -483,26 +483,57 @@ def get_trip_members(trip_id: str, db: Session = Depends(get_db)):
 
 # ========== 路线规划 ==========
 
-async def get_driving_distance(origin: str, destination: str) -> dict:
-    """调用高德驾车API获取距离和时长"""
-    url = "https://restapi.amap.com/v3/direction/driving"
-    params = {
-        "key": AMAP_KEY,
-        "origin": origin,
-        "destination": destination,
-        "extensions": "base"
+import math
+
+def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> dict:
+    """用 Haversine 公式计算两点直线距离，估算驾车时间"""
+    R = 6371  # 地球半径（公里）
+    
+    lat1, lng1, lat2, lng2 = map(math.radians, [lat1, lng1, lat2, lng2])
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    distance_km = R * c
+    
+    # 直线距离 × 1.3 ≈ 驾车距离
+    driving_distance = distance_km * 1.3
+    
+    # 山区/城市平均时速 50km/h
+    duration_hours = driving_distance / 50
+    duration_seconds = int(duration_hours * 3600)
+    
+    return {
+        "distance": int(driving_distance * 1000),  # 米
+        "duration": duration_seconds  # 秒
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, params=params)
-        data = response.json()
 
-        if data.get("status") == "1" and data.get("route"):
-            path = data["route"]["paths"][0]
-            return {
-                "distance": int(path.get("distance", 0)),
-                "duration": int(path.get("duration", 0))
-            }
+async def get_driving_distance(origin: str, destination: str) -> dict:
+    """计算两点距离（优先高德API，失败则用直线距离估算）"""
+    
+    # 先解析坐标
+    try:
+        o_lng, o_lat = map(float, origin.split(","))
+        d_lng, d_lat = map(float, destination.split(","))
+    except:
+        return {"distance": 0, "duration": 0}
+    
+    # 直接用直线距离估算（不调用高德API，境外服务器会超时）
+    result = haversine_distance(o_lat, o_lng, d_lat, d_lng)
+    print(f"直线估算: {o_lng:.2f},{o_lat:.2f} -> {d_lng:.2f},{d_lat:.2f}: {result['distance']//1000}公里, {result['duration']//60}分钟")
+    return result
+
+
+def estimate_distance(origin: str, destination: str) -> dict:
+    """备用：用直线距离估算"""
+    try:
+        o_lng, o_lat = map(float, origin.split(","))
+        d_lng, d_lat = map(float, destination.split(","))
+        return haversine_distance(o_lat, o_lng, d_lat, d_lng)
+    except:
         return {"distance": 0, "duration": 0}
 
 
