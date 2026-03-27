@@ -51,7 +51,7 @@ async def get_driving_distance(client: httpx.AsyncClient, origin: str, destinati
 
 
 async def compute_all_distances():
-    """计算所有景点对的距离（并发版本）"""
+    """计算所有景点对的距离（串行模式，安全限流）"""
     db = SessionLocal()
     
     try:
@@ -76,8 +76,6 @@ async def compute_all_distances():
         
         # 构建待计算的任务列表
         tasks = []
-        task_info = []
-        
         for i, poi1 in enumerate(pois):
             for j, poi2 in enumerate(pois):
                 if i >= j:
@@ -89,58 +87,45 @@ async def compute_all_distances():
                 
                 tasks.append((poi1, poi2, key))
         
-        print(f"开始并发计算 {len(tasks)} 对距离...", flush=True)
+        print(f"开始串行计算 {len(tasks)} 对距离（QPS=2）...", flush=True)
+        print(f"预计耗时: {len(tasks) * 0.5 / 60:.1f} 分钟", flush=True)
         
         # 创建 HTTP 客户端
         async with httpx.AsyncClient(timeout=30) as client:
-            batch_size = 15  # 每批并发数（降低避免限流）
             computed = 0
             errors = 0
+            commit_interval = 50  # 每50条提交一次
             
-            for batch_start in range(0, len(tasks), batch_size):
-                batch = tasks[batch_start:batch_start + batch_size]
+            for idx, (poi1, poi2, key) in enumerate(tasks):
+                # 串行请求
+                origin = f"{poi1.longitude},{poi1.latitude}"
+                destination = f"{poi2.longitude},{poi2.latitude}"
+                result = await get_driving_distance(client, origin, destination)
                 
-                # 并发请求
-                async def fetch_one(poi1, poi2, key):
-                    origin = f"{poi1.longitude},{poi1.latitude}"
-                    destination = f"{poi2.longitude},{poi2.latitude}"
-                    result = await get_driving_distance(client, origin, destination)
-                    return (key, poi1, poi2, result)
+                if result:
+                    distance = POIDistance(
+                        poi1_id=poi1.id,
+                        poi2_id=poi2.id,
+                        distance=result["distance"],
+                        duration=result["duration"],
+                        source=result["source"]
+                    )
+                    db.add(distance)
+                    computed += 1
+                else:
+                    errors += 1
                 
-                results = await asyncio.gather(
-                    *[fetch_one(t[0], t[1], t[2]) for t in batch],
-                    return_exceptions=True
-                )
+                # 定期提交
+                if computed % commit_interval == 0:
+                    db.commit()
+                    progress = (computed + len(existing_set)) / total_pairs * 100
+                    print(f"进度: {progress:.1f}% ({computed}/{len(tasks)}) - 错误: {errors} - 最近: {poi1.name} → {poi2.name}", flush=True)
                 
-                # 处理结果
-                for r in results:
-                    if isinstance(r, Exception):
-                        errors += 1
-                        continue
-                    
-                    key, poi1, poi2, result = r
-                    if result:
-                        distance = POIDistance(
-                            poi1_id=poi1.id,
-                            poi2_id=poi2.id,
-                            distance=result["distance"],
-                            duration=result["duration"],
-                            source=result["source"]
-                        )
-                        db.add(distance)
-                        computed += 1
-                    else:
-                        errors += 1
-                
-                # 提交到数据库
-                db.commit()
-                
-                # 打印进度
-                progress = (computed + len(existing_set)) / total_pairs * 100
-                print(f"进度: {progress:.1f}% ({computed}/{len(tasks)}) - 错误: {errors}", flush=True)
-                
-                # 高德 API 限速：QPS 20，安全起见每批间隔 1 秒
-                await asyncio.sleep(1)
+                # 限流：每2秒最多1次请求 = QPS 0.5
+                await asyncio.sleep(0.5)
+            
+            # 提交剩余记录
+            db.commit()
             
             print(f"\n完成！", flush=True)
             print(f"  新计算: {computed} 条", flush=True)
