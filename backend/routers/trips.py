@@ -537,72 +537,59 @@ async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, d
         poi_details.append({
             "name": poi['name'],
             "city": poi['city'],
-            "visit_hours": poi.get('duration', 2),
-            "coords": poi_coords.get(poi['name'], {})
+            "visit_hours": poi.get('duration', 2)
         })
 
-    # 构建距离矩阵文本
-    distance_text = "景点间驾车时间（分钟）：\n"
-    for (p1, p2), info in distance_matrix.items():
-        distance_text += f"  {p1} → {p2}: {info['duration']//60}分钟 ({info['distance']//1000}公里)\n"
+    # 构建简化的距离信息（只保留关键距离）
+    distance_text = ""
+    # 按距离排序，只保留最近的几个
+    sorted_distances = sorted(
+        [(k, v) for k, v in distance_matrix.items() if v.get('duration', 0) > 0],
+        key=lambda x: x[1].get('duration', float('inf'))
+    )[:30]  # 只保留30个最近的距离
+    
+    for (p1, p2), info in sorted_distances:
+        distance_text += f"{p1}→{p2}: {info['duration']//60}分钟\n"
 
-    prompt = f"""你是一个专业的自驾行程规划专家。请根据以下信息规划{days}天的自驾行程。
+    prompt = f"""你是自驾行程规划专家。根据景点距离规划最优路线。
 
-## 基本要求（必须严格遵守）
+## 规划规则（必须遵守）
 
-1. **路线连续性**：前一天结束地点 = 后一天起点，不能跳跃
-2. **时间控制**：每天游玩时间 + 驾车时间 = 8-10小时（不能超过10小时）
-3. **顺路规划**：避免来回绕路，保证每天路线基本是一条直线或弧线
-4. **住宿安排**：每天行程结束后需要在附近城市住宿，必须明确标注住宿城市
+1. **可重新排序景点**：不必按原顺序，按距离最优安排
+2. **连续性**：前一天住宿地 = 后一天起点
+3. **时间控制**：每天游玩+驾车 ≤ 10小时
+4. **顺路原则**：选距离近的景点，不走回头路
 
 ## 行程信息
+- 起点：{start_city}
+- 终点：{end_city}
+- 天数：{days}天
 
-- **起点城市**：{start_city}
-- **终点城市**：{end_city}
-- **总天数**：{days}天
+## 景点（可重排顺序）
+{json.dumps([p['name'] + f"({p['city']}, {p['visit_hours']}h)" for p in poi_details], ensure_ascii=False)}
 
-## 景点列表
-
-{json.dumps(poi_details, ensure_ascii=False, indent=2)}
-
-## 景点间距离矩阵
-
+## 距离参考（分钟）
 {distance_text}
 
-## 输出格式（严格按此JSON格式）
-
-```json
+## 输出JSON格式
 {{
   "days": [
     {{
       "day": 1,
-      "start_city": "大同",
-      "pois": [
-        {{"name": "云冈石窟", "visit_hours": 3}},
-        {{"name": "华严寺", "visit_hours": 2}}
-      ],
-      "stay_city": "应县",
-      "route": "大同 → 云冈石窟 → 华严寺 → 应县",
-      "drive_time": 120,
+      "start_city": "起点城市",
+      "pois": [{{"name": "景点名", "visit_hours": 2}}],
+      "stay_city": "住宿城市",
+      "route": "A → B → C",
+      "drive_time": 60,
       "visit_time": 5,
-      "total_time": 7,
-      "description": "第一天从大同出发，上午游览云冈石窟（3小时），下午参观华严寺（2小时），傍晚驱车前往应县住宿"
+      "total_time": 6,
+      "description": "行程描述"
     }}
   ],
-  "route_summary": "大同出发，途经应县、五台山、太原，最终到达郑州",
-  "total_distance": "约800公里",
-  "suggestions": "建议每天早起出发，预留充足时间游览"
+  "route_summary": "路线概览"
 }}
-```
 
-## 规划原则
-
-1. **距离优先**：优先安排相邻距离近的景点在同一天
-2. **时间平衡**：每天总时间尽量均衡，避免某天过紧或过松
-3. **住宿便利**：住宿城市选择当天最后一个景点附近的大城市或县城
-4. **灵活性**：如果景点数量不足以填满所有天数，可以适当放慢节奏
-
-请只返回JSON，不要添加任何解释文字。"""
+只输出JSON，无其他文字。"""
 
     try:
         async with httpx.AsyncClient(timeout=90) as client:
@@ -615,7 +602,7 @@ async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, d
                 json={
                     "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,  # 降低随机性，更稳定
+                    "temperature": 0.2,
                     "max_tokens": 2000
                 }
             )
@@ -624,19 +611,36 @@ async def call_llm_plan(pois: list, start_city: str, end_city: str, days: int, d
                 result = response.json()
                 content = result["choices"][0]["message"]["content"]
                 
+                print(f"LLM response: {content[:500]}")  # 调试日志
+                
                 # 提取 JSON
                 if "```json" in content:
                     content = content.split("```json")[1].split("```")[0]
                 elif "```" in content:
                     content = content.split("```")[1].split("```")[0]
                 
-                plan = json.loads(content.strip())
+                # 清理内容
+                content = content.strip()
+                if content.startswith("{") and content.endswith("}"):
+                    pass  # 已经是有效 JSON
+                else:
+                    # 尝试找到 JSON 对象
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    if start >= 0 and end > start:
+                        content = content[start:end]
                 
-                # 确保返回格式正确
+                plan = json.loads(content)
+                
                 if "days" not in plan:
-                    plan = {"days": plan.get("days", []), "route_summary": "", "suggestions": ""}
+                    plan = {"days": plan.get("days", []), "route_summary": ""}
                 
                 return plan
+            else:
+                print(f"LLM API status: {response.status_code}")
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {e}")
+        print(f"Content: {content[:500] if 'content' in dir() else 'N/A'}")
     except Exception as e:
         print(f"LLM API error: {e}")
 

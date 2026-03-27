@@ -154,7 +154,10 @@ const highlightPois = (poiIds) => {
 
 // 绘制路线（带箭头）
 const drawRoute = (routeData) => {
-  if (!AMap.value || !map.value || !routeData) return
+  if (!AMap.value || !map.value || !routeData) {
+    console.log('drawRoute: missing data', { AMap: !!AMap.value, map: !!map.value, routeData })
+    return
+  }
 
   // 清除旧路线
   clearRoute()
@@ -164,30 +167,44 @@ const drawRoute = (routeData) => {
   const startCoord = routeData.start_coord
   const endCoord = routeData.end_coord
 
+  console.log('drawRoute: days', days.length, 'poiCoords', Object.keys(poiCoords).length)
+
+  // 收集所有点用于调整视野
+  const allPoints = []
+
   // 为每天绘制路线
   days.forEach((day, dayIndex) => {
     const points = []
-    const poiNames = day.pois || []
+    const poiList = day.pois || []
 
     // 添加起点（只有第一天）
     if (dayIndex === 0 && startCoord) {
       points.push([startCoord.lng, startCoord.lat])
+      allPoints.push([startCoord.lng, startCoord.lat])
     }
 
-    // 添加当天景点
-    poiNames.forEach(name => {
+    // 添加当天景点（兼容新旧格式）
+    poiList.forEach(poi => {
+      const name = typeof poi === 'string' ? poi : poi.name
       const coord = poiCoords[name]
       if (coord) {
         points.push([coord.lng, coord.lat])
+        allPoints.push([coord.lng, coord.lat])
+      } else {
+        console.warn('Missing coord for POI:', name)
       }
     })
 
     // 添加终点（最后一天）
     if (dayIndex === days.length - 1 && endCoord) {
       points.push([endCoord.lng, endCoord.lat])
+      allPoints.push([endCoord.lng, endCoord.lat])
     }
 
-    if (points.length < 2) return
+    if (points.length < 2) {
+      console.log('Day', day.day, 'not enough points:', points.length)
+      return
+    }
 
     // 绘制带箭头的线
     const colors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399']
@@ -234,9 +251,10 @@ const drawRoute = (routeData) => {
       }
 
       // 添加景点名称
-      if (i < poiNames.length) {
+      const poiName = poiList[i]?.name || poiList[i] || ''
+      if (poiName) {
         const poiMarker = new AMap.value.Text({
-          text: poiNames[i],
+          text: poiName,
           position: points[i + 1],
           style: {
             'background-color': '#fff',
