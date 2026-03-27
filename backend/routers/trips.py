@@ -54,11 +54,12 @@ def poi_to_dict(poi: POI) -> dict:
 
 
 async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, task_id: str):
-    """后台执行行程规划"""
+    """后台执行行程规划（两阶段工作流）"""
     from database import SessionLocal
+    from models import POIDistance
     
-    planning_tasks[task_id]["status"] = "calculating"
-    planning_tasks[task_id]["progress"] = 20
+    planning_tasks[task_id]["status"] = "stage1"
+    planning_tasks[task_id]["progress"] = 10
     
     try:
         db = SessionLocal()
@@ -74,83 +75,182 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
         if not pois:
             raise Exception("未找到景点信息")
 
-        # 转换为字典格式
-        poi_list = []
-        for poi in pois:
-            poi_list.append({
-                "id": poi.id,
-                "name": poi.name,
-                "city": poi.city,
-                "latitude": poi.latitude,
-                "longitude": poi.longitude,
-                "duration": poi.duration or 2
-            })
-
-        # 获取起点和终点坐标
-        planning_tasks[task_id]["status"] = "geocoding"
-        planning_tasks[task_id]["progress"] = 30
-        start_loc = await get_city_location(start_city)
-        end_loc = await get_city_location(end_city)
-
-        # 构建景点坐标映射
-        poi_coords = {p["name"]: {"lng": p["longitude"], "lat": p["latitude"]} for p in poi_list}
-
-        # 并行计算所有距离
-        planning_tasks[task_id]["status"] = "distance"
-        planning_tasks[task_id]["progress"] = 40
-        distance_tasks = []
-        distance_keys = []
-
-        if start_loc:
-            for poi in poi_list:
-                distance_tasks.append(get_driving_distance(
-                    f"{start_loc[0]},{start_loc[1]}",
-                    f"{poi['longitude']},{poi['latitude']}"
-                ))
-                distance_keys.append((start_city, poi["name"]))
-
-        for i, poi1 in enumerate(poi_list):
-            for j, poi2 in enumerate(poi_list):
-                if i < j:
-                    distance_tasks.append(get_driving_distance(
-                        f"{poi1['longitude']},{poi1['latitude']}",
-                        f"{poi2['longitude']},{poi2['latitude']}"
-                    ))
-                    distance_keys.append((poi1["name"], poi2["name"]))
-
-        if end_loc:
-            for poi in poi_list:
-                distance_tasks.append(get_driving_distance(
-                    f"{poi['longitude']},{poi['latitude']}",
-                    f"{end_loc[0]},{end_loc[1]}"
-                ))
-                distance_keys.append((poi["name"], end_city))
-
-        distance_results = await asyncio.gather(*distance_tasks, return_exceptions=True)
-
-        distance_matrix = {}
-        for key, result in zip(distance_keys, distance_results):
-            if isinstance(result, Exception):
-                distance_matrix[key] = {"distance": 0, "duration": 0}
-            else:
-                distance_matrix[key] = result
-                if key[0] != start_city and key[1] != end_city:
-                    distance_matrix[(key[1], key[0])] = result
-
-        # 调用 LLM 规划
-        planning_tasks[task_id]["status"] = "planning"
-        planning_tasks[task_id]["progress"] = 70
-        planning_tasks[task_id]["message"] = "AI 正在规划最佳路线..."
+        # ========== 阶段1：规划城市链 ==========
+        planning_tasks[task_id]["message"] = "阶段1：规划城市链..."
         
-        plan_result = await call_llm_plan(poi_list, start_city, end_city, days, distance_matrix, poi_coords)
+        cities = list(set([p.city for p in pois if p.city]))
+        city_poi_count = {}
+        for p in pois:
+            city_poi_count[p.city] = city_poi_count.get(p.city, 0) + 1
+        
+        # 获取城市代表景点
+        city_rep = {}
+        for city in cities:
+            p = db.query(POI).filter(POI.city == city).first()
+            if p:
+                city_rep[city] = p
+        
+        # 获取城市间距离
+        city_distances = {}
+        for c1 in cities:
+            city_distances[c1] = {}
+            for c2 in cities:
+                if c1 == c2:
+                    city_distances[c1][c2] = 0
+                elif c1 in city_rep and c2 in city_rep:
+                    d = db.query(POIDistance).filter(
+                        POIDistance.poi1_id == min(city_rep[c1].id, city_rep[c2].id),
+                        POIDistance.poi2_id == max(city_rep[c1].id, city_rep[c2].id)
+                    ).first()
+                    if d:
+                        city_distances[c1][c2] = d.duration // 60
+        
+        # 调用 LLM 规划城市链
+        city_chain_prompt = f"""规划从{start_city}到{end_city}的{days}天旅游路线城市序列。
 
-        # 添加景点坐标信息
-        plan_result["poi_coords"] = poi_coords
-        plan_result["start_city"] = start_city
-        plan_result["end_city"] = end_city
-        plan_result["start_coord"] = {"lng": start_loc[0], "lat": start_loc[1]} if start_loc else None
-        plan_result["end_coord"] = {"lng": end_loc[0], "lat": end_loc[1]} if end_loc else None
+可用城市：{', '.join(cities)}
+各城市景点数量：{json.dumps(city_poi_count, ensure_ascii=False)}
+城市间驾车时长（分钟）：{json.dumps(city_distances, ensure_ascii=False)}
 
+要求：
+- 序列长度={days}
+- 起点={start_city}，终点={end_city}
+- 相邻城市驾车尽量短
+- 可重复城市（如停留多天）
+
+直接输出JSON数组，如：["大同","大同","太原","郑州","郑州"]
+不要解释。"""
+
+        city_chain = await call_llm_json_array(city_chain_prompt)
+        if not city_chain:
+            # 失败时生成默认城市链
+            city_chain = [start_city] * days
+        
+        planning_tasks[task_id]["progress"] = 40
+        
+        # ========== 阶段2：规划每日路线 ==========
+        planning_tasks[task_id]["status"] = "stage2"
+        planning_tasks[task_id]["message"] = "阶段2：规划每日路线..."
+        
+        poi_coords = {p.name: {"lng": p.longitude, "lat": p.latitude} for p in pois}
+        visited_poi_ids = set()
+        daily_routes = []
+        
+        for i in range(len(city_chain) - 1):
+            city_a = city_chain[i]
+            city_b = city_chain[i + 1]
+            
+            # 筛选候选景点
+            nearby_cities = {city_a, city_b}
+            candidate_pois = [p for p in pois if p.city in nearby_cities and p.id not in visited_poi_ids]
+            
+            if not candidate_pois:
+                daily_routes.append({
+                    "day": i + 1,
+                    "start_city": city_a,
+                    "end_city": city_b,
+                    "pois": [],
+                    "route": f"{city_a} → {city_b}",
+                    "drive_time": city_distances.get(city_a, {}).get(city_b, 120),
+                    "visit_time": 0,
+                    "total_time": city_distances.get(city_a, {}).get(city_b, 120) // 60,
+                    "description": f"直接从{city_a}前往{city_b}"
+                })
+                continue
+            
+            # 构建景点信息
+            poi_info = [{"id": p.id, "name": p.name, "city": p.city, "duration": p.duration or 2} for p in candidate_pois]
+            
+            # 获取景点间距离
+            distances = {}
+            all_pois = candidate_pois + [city_rep.get(city_a), city_rep.get(city_b)]
+            all_pois = [p for p in all_pois if p]
+            
+            for j, p1 in enumerate(all_pois):
+                for k, p2 in enumerate(all_pois):
+                    if j < k and p1.id != p2.id:
+                        d = db.query(POIDistance).filter(
+                            POIDistance.poi1_id == min(p1.id, p2.id),
+                            POIDistance.poi2_id == max(p1.id, p2.id)
+                        ).first()
+                        if d:
+                            distances[f"{p1.id}_{p2.id}"] = d.duration // 60
+            
+            # 调用 LLM 规划每日路线
+            daily_prompt = f"""规划从{city_a}到{city_b}的单日行程。
+
+候选景点：
+{json.dumps(poi_info, ensure_ascii=False, indent=2)}
+
+景点间驾车时长（分钟）：
+{json.dumps(distances, ensure_ascii=False, indent=2)}
+
+规则：
+1. 选择2-3个景点
+2. 路线：{city_a} → 景点1 → 景点2 → ... → {city_b}
+3. 单段驾车≤3.5小时
+4. 总时间（自驾+游玩）约8-10小时
+
+输出JSON：
+{{"selected_pois":[景点ID列表],"route":"城市A→景点1→城市B","total_drive_time":分钟,"total_visit_time":小时,"description":"说明"}}
+只输出JSON。"""
+
+            daily_result = await call_llm_json_obj(daily_prompt)
+            
+            if daily_result and "selected_pois" in daily_result:
+                selected_ids = daily_result.get("selected_pois", [])
+                selected_poi_details = []
+                for poi_id in selected_ids:
+                    poi = db.query(POI).filter(POI.id == poi_id).first()
+                    if poi:
+                        selected_poi_details.append({"id": poi.id, "name": poi.name, "city": poi.city, "duration": poi.duration or 2})
+                        visited_poi_ids.add(poi.id)
+                
+                daily_routes.append({
+                    "day": i + 1,
+                    "start_city": city_a,
+                    "end_city": city_b,
+                    "pois": selected_poi_details,
+                    "route": daily_result.get("route", f"{city_a} → {city_b}"),
+                    "drive_time": daily_result.get("total_drive_time", 0),
+                    "visit_time": daily_result.get("total_visit_time", 0),
+                    "total_time": daily_result.get("total_drive_time", 0) // 60 + daily_result.get("total_visit_time", 0),
+                    "description": daily_result.get("description", "")
+                })
+            else:
+                # 失败时取前2个景点
+                default_pois = candidate_pois[:2]
+                for p in default_pois:
+                    visited_poi_ids.add(p.id)
+                
+                daily_routes.append({
+                    "day": i + 1,
+                    "start_city": city_a,
+                    "end_city": city_b,
+                    "pois": [{"id": p.id, "name": p.name, "city": p.city, "duration": p.duration or 2} for p in default_pois],
+                    "route": f"{city_a} → " + " → ".join([p.name for p in default_pois]) + f" → {city_b}",
+                    "drive_time": 120,
+                    "visit_time": sum(p.duration or 2 for p in default_pois),
+                    "total_time": sum(p.duration or 2 for p in default_pois) + 2,
+                    "description": f"游览{len(default_pois)}个景点"
+                })
+            
+            progress = 40 + int((i + 1) / (len(city_chain) - 1) * 50)
+            planning_tasks[task_id]["progress"] = progress
+        
+        # 构建最终结果
+        plan_result = {
+            "days": daily_routes,
+            "city_chain": city_chain,
+            "start_city": start_city,
+            "end_city": end_city,
+            "total_days": days,
+            "total_pois_visited": len(visited_poi_ids),
+            "total_pois_selected": len(pois),
+            "poi_coords": poi_coords,
+            "route_summary": f"共安排 {len(visited_poi_ids)}/{len(pois)} 个景点"
+        }
+        
         # 存储规划结果
         planning_tasks[task_id]["status"] = "saving"
         planning_tasks[task_id]["progress"] = 90
@@ -183,10 +283,144 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
         planning_tasks[task_id]["result"] = plan_result
 
     except Exception as e:
+        import traceback
         planning_tasks[task_id]["status"] = "failed"
         planning_tasks[task_id]["error"] = str(e)
+        print(f"规划失败: {e}\n{traceback.format_exc()}")
     finally:
         db.close()
+
+
+async def call_llm_json_array(prompt: str) -> list:
+    """调用 LLM 获取 JSON 数组"""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{OPENAI_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                if content:
+                    import re
+                    json_match = re.search(r'\[[\s\S]*?\]', content)
+                    if json_match:
+                        return json.loads(json_match.group())
+    except Exception as e:
+        print(f"LLM call failed: {e}")
+    
+    return None
+
+
+async def call_llm_json_obj(prompt: str) -> dict:
+    """调用 LLM 获取 JSON 对象"""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{OPENAI_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                if content:
+                    import re
+                    json_match = re.search(r'\{[\s\S]*\}', content)
+                    if json_match:
+                        return json.loads(json_match.group())
+    except Exception as e:
+        print(f"LLM call failed: {e}")
+    
+    return None
+async def call_llm_simple(prompt: str) -> list:
+    """调用 LLM 获取 JSON 数组"""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{OPENAI_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                if content:
+                    # 提取 JSON 数组
+                    import re
+                    json_match = re.search(r'\[[\s\S]*?\]', content)
+                    if json_match:
+                        return json.loads(json_match.group())
+    except Exception as e:
+        print(f"LLM call failed: {e}")
+    
+    return None
+
+
+async def call_llm_json(prompt: str) -> dict:
+    """调用 LLM 获取 JSON 对象"""
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{OPENAI_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                if content:
+                    # 提取 JSON 对象
+                    import re
+                    json_match = re.search(r'\{[\s\S]*\}', content)
+                    if json_match:
+                        return json.loads(json_match.group())
+    except Exception as e:
+        print(f"LLM call failed: {e}")
+    
+    return None
 
 
 # ========== 行程管理 ==========
