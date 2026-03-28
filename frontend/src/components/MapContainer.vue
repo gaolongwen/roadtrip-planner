@@ -172,8 +172,6 @@ const drawRoute = (routeData) => {
 
   const days = routeData.days || []
   const poiCoords = routeData.poi_coords || {}
-  const startCoord = routeData.start_coord
-  const endCoord = routeData.end_coord
 
   console.log('drawRoute: days', days.length, 'poiCoords', Object.keys(poiCoords).length)
 
@@ -185,13 +183,32 @@ const drawRoute = (routeData) => {
     const points = []
     const poiList = day.pois || []
 
-    // 添加起点（只有第一天）
-    if (dayIndex === 0 && startCoord) {
-      points.push([startCoord.lng, startCoord.lat])
-      allPoints.push([startCoord.lng, startCoord.lat])
+    // 添加起点城市（使用第一个景点或起点坐标）
+    if (day.start_city && poiList.length > 0) {
+      const firstPoi = poiList[0]
+      const coord = poiCoords[firstPoi.name]
+      if (coord) {
+        // 起点：城市名标注
+        const startMarker = new AMap.value.Text({
+          text: `📍${day.start_city}`,
+          position: [coord.lng, coord.lat],
+          style: {
+            'background-color': '#409EFF',
+            'color': '#fff',
+            'border': 'none',
+            'padding': '4px 8px',
+            'font-size': '12px',
+            'font-weight': 'bold',
+            'border-radius': '4px',
+          },
+          offset: new AMap.value.Pixel(-60, -30),
+        })
+        map.value.add(startMarker)
+        routeMarkers.value.push(startMarker)
+      }
     }
 
-    // 添加当天景点（兼容新旧格式）
+    // 添加当天景点
     poiList.forEach(poi => {
       const name = typeof poi === 'string' ? poi : poi.name
       const coord = poiCoords[name]
@@ -203,14 +220,8 @@ const drawRoute = (routeData) => {
       }
     })
 
-    // 添加终点（最后一天）
-    if (dayIndex === days.length - 1 && endCoord) {
-      points.push([endCoord.lng, endCoord.lat])
-      allPoints.push([endCoord.lng, endCoord.lat])
-    }
-
-    if (points.length < 2) {
-      console.log('Day', day.day, 'not enough points:', points.length)
+    if (points.length < 1) {
+      console.log('Day', day.day, 'no points')
       return
     }
 
@@ -218,71 +229,89 @@ const drawRoute = (routeData) => {
     const colors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399']
     const color = colors[dayIndex % colors.length]
 
-    const polyline = new AMap.value.Polyline({
-      path: points,
-      strokeColor: color,
-      strokeWeight: 5,
-      strokeStyle: 'solid',
-      showDir: true, // 显示箭头
-      lineJoin: 'round',
-      lineCap: 'round',
+    if (points.length >= 2) {
+      const polyline = new AMap.value.Polyline({
+        path: points,
+        strokeColor: color,
+        strokeWeight: 5,
+        strokeStyle: 'solid',
+        showDir: true, // 显示箭头
+        lineJoin: 'round',
+        lineCap: 'round',
+      })
+
+      map.value.add(polyline)
+      routePolylines.value.push(polyline)
+    }
+
+    // 添加景点标记
+    points.forEach((point, i) => {
+      const poi = poiList[i]
+      if (!poi) return
+
+      // 日期+序号标签
+      const dayMarker = new AMap.value.Text({
+        text: `D${day.day}-${i + 1}`,
+        position: point,
+        style: {
+          'background-color': color,
+          'color': '#fff',
+          'border': 'none',
+          'padding': '2px 6px',
+          'font-size': '11px',
+          'font-weight': 'bold',
+          'border-radius': '50%',
+        },
+        offset: new AMap.value.Pixel(-20, -20),
+      })
+      map.value.add(dayMarker)
+      routeMarkers.value.push(dayMarker)
+
+      // 景点名称
+      const poiMarker = new AMap.value.Text({
+        text: poi.name,
+        position: point,
+        style: {
+          'background-color': '#fff',
+          'color': color,
+          'border': `2px solid ${color}`,
+          'padding': '2px 6px',
+          'font-size': '11px',
+          'border-radius': '4px',
+        },
+        offset: new AMap.value.Pixel(0, -15),
+      })
+      map.value.add(poiMarker)
+      routeMarkers.value.push(poiMarker)
     })
 
-    map.value.add(polyline)
-    routePolylines.value.push(polyline)
-
-    // 在每段线中点添加标注
-    for (let i = 0; i < points.length - 1; i++) {
-      const midPoint = [
-        (points[i][0] + points[i + 1][0]) / 2,
-        (points[i][1] + points[i + 1][1]) / 2
-      ]
-
-      // 添加日期标签
-      if (i === 0) {
-        const startMarker = new AMap.value.Text({
-          text: `D${day.day}`,
-          position: points[0],
-          style: {
-            'background-color': color,
-            'color': '#fff',
-            'border': 'none',
-            'padding': '4px 8px',
-            'font-size': '12px',
-            'font-weight': 'bold',
-            'border-radius': '4px',
-          },
-          offset: new AMap.value.Pixel(0, -20),
-        })
-        map.value.add(startMarker)
-        routeMarkers.value.push(startMarker)
-      }
-
-      // 添加景点名称
-      const poiName = poiList[i]?.name || poiList[i] || ''
-      if (poiName) {
-        const poiMarker = new AMap.value.Text({
-          text: poiName,
-          position: points[i + 1],
-          style: {
-            'background-color': '#fff',
-            'color': color,
-            'border': `2px solid ${color}`,
-            'padding': '2px 6px',
-            'font-size': '11px',
-            'border-radius': '4px',
-          },
-          offset: new AMap.value.Pixel(0, -15),
-        })
-        map.value.add(poiMarker)
-        routeMarkers.value.push(poiMarker)
-      }
+    // 添加终点城市（住宿地）
+    if (day.end_city && points.length > 0) {
+      const lastPoint = points[points.length - 1]
+      const endMarker = new AMap.value.Text({
+        text: `🏨${day.end_city}`,
+        position: lastPoint,
+        style: {
+          'background-color': '#67C23A',
+          'color': '#fff',
+          'border': 'none',
+          'padding': '4px 8px',
+          'font-size': '12px',
+          'font-weight': 'bold',
+          'border-radius': '4px',
+        },
+        offset: new AMap.value.Pixel(60, -30),
+      })
+      map.value.add(endMarker)
+      routeMarkers.value.push(endMarker)
     }
   })
 
   // 调整视野包含所有路线
   if (routePolylines.value.length > 0) {
     map.value.setFitView(routePolylines.value, false, [50, 50, 50, 50])
+  } else if (allPoints.length > 0) {
+    map.value.setFitView(allPoints.map(p => new AMap.value.Marker({ position: p })), false, [50, 50, 50, 50])
   }
 }
 

@@ -121,12 +121,13 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
 直接输出JSON数组，如：["大同","大同","太原","郑州","郑州"]
 不要解释。"""
 
-        city_chain = await call_llm_json_array(city_chain_prompt)
+        city_chain = await call_llm_json_array(city_chain_prompt, cities)
         if not city_chain:
             # 失败时生成默认城市链
             city_chain = [start_city] * days
         
         planning_tasks[task_id]["progress"] = 40
+        planning_tasks[task_id]["message"] = f"城市链规划完成：{' → '.join(city_chain)}"
         
         # ========== 阶段2：规划每日路线 ==========
         planning_tasks[task_id]["status"] = "stage2"
@@ -177,6 +178,8 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
                             distances[f"{p1.id}_{p2.id}"] = d.duration // 60
             
             # 调用 LLM 规划每日路线
+            planning_tasks[task_id]["message"] = f"规划第 {i+1} 天行程：{city_a} → {city_b}..."
+            
             daily_prompt = f"""规划从{city_a}到{city_b}的单日行程。
 
 候选景点：
@@ -195,7 +198,8 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
 {{"selected_pois":[景点ID列表],"route":"城市A→景点1→城市B","total_drive_time":分钟,"total_visit_time":小时,"description":"说明"}}
 只输出JSON。"""
 
-            daily_result = await call_llm_json_obj(daily_prompt)
+            candidate_ids = [p['id'] for p in poi_info]
+            daily_result = await call_llm_json_obj(daily_prompt, candidate_ids)
             
             if daily_result and "selected_pois" in daily_result:
                 selected_ids = daily_result.get("selected_pois", [])
@@ -291,8 +295,8 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
         db.close()
 
 
-async def call_llm_json_array(prompt: str) -> list:
-    """调用 LLM 获取 JSON 数组"""
+async def call_llm_json_array(prompt: str, cities: list = None) -> list:
+    """调用 LLM 获取 JSON 数组（支持从 reasoning 提取）"""
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(
@@ -311,21 +315,35 @@ async def call_llm_json_array(prompt: str) -> list:
 
             if response.status_code == 200:
                 result = response.json()
-                content = result["choices"][0]["message"]["content"]
+                msg = result["choices"][0]["message"]
+                content = msg.get("content", "")
+                reasoning = msg.get("reasoning_content", "")
                 
-                if content:
-                    import re
-                    json_match = re.search(r'\[[\s\S]*?\]', content)
-                    if json_match:
-                        return json.loads(json_match.group())
+                # 优先从 content 提取，失败则从 reasoning 提取
+                text = content if content else reasoning
+                import re
+                
+                # 找所有 JSON 数组
+                all_arrays = re.findall(r'\["[^"]+?"(?:\s*,\s*"[^"]+?")*\]', text)
+                for arr_str in all_arrays:
+                    arr = json.loads(arr_str)
+                    # 过滤示例格式（包含"城市"字样）
+                    if any("城市" in c for c in arr):
+                        continue
+                    # 如果提供了 cities 列表，验证所有城市都在列表中
+                    if cities and all(c in cities for c in arr):
+                        return arr
+                    elif not cities:
+                        return arr
+                
     except Exception as e:
         print(f"LLM call failed: {e}")
     
     return None
 
 
-async def call_llm_json_obj(prompt: str) -> dict:
-    """调用 LLM 获取 JSON 对象"""
+async def call_llm_json_obj(prompt: str, candidate_ids: list = None) -> dict:
+    """调用 LLM 获取 JSON 对象（支持从 reasoning 提取）"""
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(
@@ -344,13 +362,35 @@ async def call_llm_json_obj(prompt: str) -> dict:
 
             if response.status_code == 200:
                 result = response.json()
-                content = result["choices"][0]["message"]["content"]
+                msg = result["choices"][0]["message"]
+                content = msg.get("content", "")
+                reasoning = msg.get("reasoning_content", "")
                 
-                if content:
-                    import re
-                    json_match = re.search(r'\{[\s\S]*\}', content)
-                    if json_match:
-                        return json.loads(json_match.group())
+                text = content if content else reasoning
+                import re
+                
+                # 方法1: 提取 ID 数组
+                array_match = re.search(r'\[\s*\d+(?:\s*,\s*\d+)*\s*\]', text)
+                if array_match:
+                    selected_ids = json.loads(array_match.group())
+                    if candidate_ids:
+                        selected_ids = [i for i in selected_ids if i in candidate_ids]
+                    return {"selected_pois": selected_ids}
+                
+                # 方法2: 提取景点列表（"景点：1, 2, 35"）
+                poi_match = re.search(r'景点[：:]\s*(\d+(?:\s*[，,]\s*\d+)*)', text)
+                if poi_match:
+                    selected_ids = [int(x) for x in re.findall(r'\d+', poi_match.group(1))]
+                    if candidate_ids:
+                        selected_ids = [i for i in selected_ids if i in candidate_ids]
+                    return {"selected_pois": selected_ids}
+                
+                # 方法3: 完整 JSON 对象
+                obj_match = re.search(r'\{[\s\S]*"selected_pois"[\s\S]*?\[[\s\S]*?\][\s\S]*?\}', text)
+                if obj_match:
+                    parsed = json.loads(obj_match.group())
+                    return parsed
+                
     except Exception as e:
         print(f"LLM call failed: {e}")
     
