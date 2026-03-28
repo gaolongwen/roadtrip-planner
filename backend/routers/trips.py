@@ -53,6 +53,74 @@ def poi_to_dict(poi: POI) -> dict:
     }
 
 
+def greedy_city_chain(start_city: str, end_city: str, days: int, cities: list, city_poi_count: dict, city_distances: dict) -> list:
+    """贪心算法分配城市链
+    
+    策略：
+    1. 按景点数量排序城市
+    2. 从起点出发，每次选最近且有景点的城市
+    3. 景点多的城市多停留几天
+    """
+    if not cities:
+        return [start_city] + [end_city] * days
+    
+    # 排除起点和终点
+    other_cities = [c for c in cities if c not in [start_city, end_city]]
+    
+    # 按景点数量排序（降序）
+    sorted_cities = sorted(other_cities, key=lambda c: city_poi_count.get(c, 0), reverse=True)
+    
+    # 计算每个城市应该停留几天
+    total_pois = sum(city_poi_count.values())
+    city_days = {}
+    remaining_days = days
+    
+    # 先分配景点最多的城市
+    for city in sorted_cities:
+        if remaining_days <= 0:
+            break
+        poi_ratio = city_poi_count.get(city, 0) / total_pois if total_pois > 0 else 0
+        stay_days = max(1, round(poi_ratio * days))
+        stay_days = min(stay_days, remaining_days)
+        city_days[city] = stay_days
+        remaining_days -= stay_days
+    
+    # 构建城市链
+    chain = [start_city]
+    
+    # 简单策略：按距离贪心选择下一个城市
+    current = start_city
+    remaining = dict(city_days)
+    
+    while remaining and len(chain) < days:
+        # 找距离当前城市最近的有剩余天数的城市
+        next_city = None
+        min_dist = float('inf')
+        
+        for city in remaining:
+            if remaining[city] > 0:
+                dist = city_distances.get(current, {}).get(city, 9999)
+                if dist < min_dist:
+                    min_dist = dist
+                    next_city = city
+        
+        if next_city:
+            chain.append(next_city)
+            remaining[next_city] -= 1
+            current = next_city
+        else:
+            break
+    
+    # 补齐到终点
+    while len(chain) < days + 1:
+        chain.append(end_city)
+    
+    # 确保最后一个城市是终点
+    chain[-1] = end_city
+    
+    return chain
+
+
 async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, task_id: str):
     """后台执行行程规划（两阶段工作流）"""
     from database import SessionLocal
@@ -113,18 +181,35 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
 城市间驾车时长（分钟）：{json.dumps(city_distances, ensure_ascii=False)}
 
 要求：
-- 序列长度={days}
-- 起点={start_city}，终点={end_city}
+- 序列长度={days + 1}（起点+终点共{days + 1}个城市，形成{days}段行程）
+- 第一个城市={start_city}，最后一个城市={end_city}
 - 相邻城市驾车尽量短
-- 可重复城市（如停留多天）
+- 景点多的城市可以多停留几天
+- 可重复城市
 
-直接输出JSON数组，如：["大同","大同","太原","郑州","郑州"]
-不要解释。"""
+示例（7天行程，景点分布：洛阳7个、南阳3个、郑州2个）：
+["郑州","洛阳","洛阳","洛阳","南阳","南阳","南阳","邯郸"]
+
+直接输出JSON数组，不要解释。"""
 
         city_chain = await call_llm_json_array(city_chain_prompt, cities)
-        if not city_chain:
-            # 失败时生成默认城市链
-            city_chain = [start_city] * days
+        
+        # 验证城市链是否合理（包含多个不同城市）
+        unique_cities = set(city_chain) if city_chain else set()
+        if not city_chain or len(unique_cities) < 2:
+            print(f"[WARN] LLM 城市链不合理，使用贪心算法: {city_chain}")
+            # 贪心算法：按景点数量分配城市
+            city_chain = greedy_city_chain(start_city, end_city, days, cities, city_poi_count, city_distances)
+        
+        # 确保城市链长度 = 天数 + 1（N天有N段路）
+        if len(city_chain) < days + 1:
+            city_chain = city_chain + [end_city] * (days + 1 - len(city_chain))
+        elif len(city_chain) > days + 1:
+            city_chain = city_chain[:days + 1]
+        
+        print(f"[DEBUG] 城市链: {city_chain}, 长度: {len(city_chain)}, 天数: {days}")
+        print(f"[DEBUG] 将规划 {len(city_chain) - 1} 天的行程")
+        print(f"[DEBUG] 所有城市: {cities}, 景点分布: {city_poi_count}")
         
         planning_tasks[task_id]["progress"] = 40
         planning_tasks[task_id]["message"] = f"城市链规划完成：{' → '.join(city_chain)}"
@@ -137,13 +222,29 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
         visited_poi_ids = set()
         daily_routes = []
         
+        # 构建城市→景点的映射
+        city_to_pois = {}
+        for p in pois:
+            if p.city not in city_to_pois:
+                city_to_pois[p.city] = []
+            city_to_pois[p.city].append(p)
+        
+        print(f"[DEBUG] 城市→景点映射: {[(c, len(pois)) for c, pois in city_to_pois.items()]}")
+        
         for i in range(len(city_chain) - 1):
             city_a = city_chain[i]
             city_b = city_chain[i + 1]
             
-            # 筛选候选景点
-            nearby_cities = {city_a, city_b}
-            candidate_pois = [p for p in pois if p.city in nearby_cities and p.id not in visited_poi_ids]
+            # 筛选候选景点：当天所在城市的未访问景点
+            candidate_pois = [p for p in city_to_pois.get(city_a, []) if p.id not in visited_poi_ids]
+            
+            # 如果当前城市没有景点，尝试下一个城市
+            if not candidate_pois and city_b != city_a:
+                candidate_pois = [p for p in city_to_pois.get(city_b, []) if p.id not in visited_poi_ids]
+            
+            print(f"[DEBUG] 第{i+1}天: {city_a} → {city_b}")
+            print(f"[DEBUG]   candidate_pois: {[p.name for p in candidate_pois]}")
+            print(f"[DEBUG]   visited_poi_ids: {visited_poi_ids}")
             
             if not candidate_pois:
                 daily_routes.append({
@@ -241,6 +342,15 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
             
             progress = 40 + int((i + 1) / (len(city_chain) - 1) * 50)
             planning_tasks[task_id]["progress"] = progress
+            planning_tasks[task_id]["message"] = f"第 {i+1}/{len(city_chain)-1} 天规划完成"
+        
+        # 查询城市坐标
+        from models import CityCoordinate
+        city_coords = {}
+        for city in set(city_chain):
+            cc = db.query(CityCoordinate).filter(CityCoordinate.city == city).first()
+            if cc:
+                city_coords[city] = {"lng": cc.longitude, "lat": cc.latitude}
         
         # 构建最终结果
         plan_result = {
@@ -252,6 +362,7 @@ async def do_plan_trip(trip_id: str, start_city: str, end_city: str, days: int, 
             "total_pois_visited": len(visited_poi_ids),
             "total_pois_selected": len(pois),
             "poi_coords": poi_coords,
+            "city_coords": city_coords,
             "route_summary": f"共安排 {len(visited_poi_ids)}/{len(pois)} 个景点"
         }
         

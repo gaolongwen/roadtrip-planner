@@ -82,6 +82,17 @@ class TripRoute(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
 
 
+class CityCoordinate(Base):
+    """城市坐标表（市人民政府位置）"""
+    __tablename__ = "city_coordinates"
+
+    city = Column(String(100), primary_key=True, comment="城市名称")
+    province = Column(String(50), comment="省份")
+    latitude = Column(Float, nullable=False, comment="纬度")
+    longitude = Column(Float, nullable=False, comment="经度")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+
+
 class POICityDistance(Base):
     """景点到所属城市/县城的距离"""
     __tablename__ = "poi_city_distances"
