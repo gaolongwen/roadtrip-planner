@@ -25,8 +25,12 @@ OPENAI_BASE_URL = "https://api.lkeap.cloud.tencent.com/coding/v3"
 OPENAI_MODEL = "glm-5"
 
 
-def call_llm(prompt: str, temperature: float = 0.3) -> str:
-    """调用 LLM API"""
+def call_llm(prompt: str, temperature: float = 0.3) -> dict:
+    """
+    调用 LLM API
+    
+    返回: {"content": str, "reasoning": str}
+    """
     client = httpx.Client(timeout=180)
     
     response = client.post(
@@ -44,14 +48,11 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
     )
     
     data = response.json()
-    content = data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    content = msg.get("content", "")
+    reasoning = msg.get("reasoning_content", "")
     
-    # 如果内容为空，检查 reasoning_content
-    if not content and "reasoning_content" in data["choices"][0]["message"]:
-        # reasoning 完成但内容为空，可能需要继续
-        pass
-    
-    return content
+    return {"content": content, "reasoning": reasoning}
 
 
 def get_pois_by_city(db, cities: List[str]) -> Dict[str, List[POI]]:
@@ -131,51 +132,59 @@ def stage1_plan_city_chain(
         if city:
             city_poi_count[city] = city_poi_count.get(city, 0) + 1
     
-    # 构建 prompt
-    prompt = f"""你是一个旅游路线规划专家。请根据以下信息规划一条城市序列。
+    # 构建简化 prompt（避免 GLM-5 只输出 reasoning）
+    prompt = f"""规划从{start_city}到{end_city}的{days}天旅游城市路线。
 
-## 基本信息
-- 起点城市：{start_city}
-- 终点城市：{end_city}
-- 游玩天数：{days} 天
-- 城市列表：{', '.join(cities)}
+城市列表：{', '.join(cities)}
+各城市景点数：{json.dumps(city_poi_count, ensure_ascii=False)}
 
-## 各城市景点数量
-{json.dumps(city_poi_count, ensure_ascii=False, indent=2)}
+要求：
+1. 必须从{start_city}开始，到{end_city}结束
+2. 输出{days}个城市名（可重复）
+3. 相邻城市驾车不超过4小时
 
-## 城市间驾车时长（分钟）
-{json.dumps(city_distances, ensure_ascii=False, indent=2)}
-
-## 规则
-1. 城市序列长度必须等于 {days} 天
-2. 城市可以重复（例如：大同→大同→太原→太原）
-3. 必须从 {start_city} 开始，到 {end_city} 结束
-4. 相邻城市间的驾车时长尽量不超过 3 小时
-5. 优先选择景点数量多的城市
-6. 尽量不走回头路
-
-## 输出格式
-返回 JSON 数组，例如：
-["大同", "大同", "太原", "晋中", "郑州"]
-
-只输出 JSON 数组，不要其他内容。
+输出格式（只输出JSON数组）：
+["城市1", "城市2", "城市3"]
 """
 
-    response = call_llm(prompt, temperature=0.3)
+    result = call_llm(prompt, temperature=0.3)
+    content = result["content"]
+    reasoning = result["reasoning"]
     
-    # 解析 JSON
+    # 解析 JSON（优先从 content，如果为空则从 reasoning 提取）
+    import re
+    text_to_parse = content if content else reasoning
+    
     try:
-        # 提取 JSON 数组
-        import re
-        json_match = re.search(r'\[[\s\S]*?\]', response)
-        if json_match:
-            city_chain = json.loads(json_match.group())
-            return city_chain
+        # 方法1: 找所有 JSON 数组，过滤只包含合法城市的
+        all_arrays = re.findall(r'\["[^"]+?"(?:\s*,\s*"[^"]+?")*\]', text_to_parse)
+        for arr_str in all_arrays:
+            city_chain = json.loads(arr_str)
+            # 过滤掉示例格式（包含"城市"字样）
+            if any("城市" in c for c in city_chain):
+                continue
+            # 检查是否都是合法城市
+            if all(c in cities for c in city_chain) and len(city_chain) == days:
+                return city_chain
+        
+        # 方法2: reasoning 末尾的 "城市链: 大同, 太原, 郑州" 或类似格式
+        chain_match = re.search(r'(?:城市链|路线|行程)[：:]\s*([^\n]+)', text_to_parse)
+        if chain_match:
+            cities_str = chain_match.group(1)
+            # 提取城市名（只保留在候选列表中的）
+            found_cities = [c for c in cities if c in cities_str]
+            if len(found_cities) == days:
+                return found_cities
+        
+        print(f"未找到长度为 {days} 的城市链")
     except Exception as e:
         print(f"解析城市链失败: {e}")
-        print(f"LLM 返回: {response}")
+    
+    print(f"Content: {content[:200] if content else 'empty'}")
+    print(f"Reasoning 片段: {reasoning[:300]}...")
     
     # 失败时返回简单的城市序列
+    print(f"回退到默认城市链: [{start_city}] * {days}")
     return [start_city] * days
 
 
@@ -243,52 +252,66 @@ def stage2_plan_daily_route(
                     key = f"{p1.id}_{p2.id}"
                     distances[key] = dist["duration"] // 60  # 分钟
     
-    # 构建 prompt
-    prompt = f"""你是一个旅游路线规划专家。请规划从 {city_a} 到 {city_b} 的单日行程。
+    # 构建简化 prompt
+    poi_names = [f"{p['id']}:{p['name']}({p['city']},{p['duration']}h)" for p in poi_info]
+    prompt = f"""规划从{city_a}到{city_b}的单日行程（第{day_number}天）。
 
-## 基本信息
-- 起点：{city_a}
-- 终点：{city_b}
-- 第 {day_number} 天
+候选景点：{', '.join(poi_names)}
 
-## 候选景点
-{json.dumps(poi_info, ensure_ascii=False, indent=2)}
+要求：
+1. 选择2-3个景点
+2. 单段驾车不超过3.5小时
 
-## 景点间驾车时长（分钟）
-{json.dumps(distances, ensure_ascii=False, indent=2)}
-
-## 规划规则
-1. 选择 2-3 个景点
-2. 路线：{city_a} → 景点1 → 景点2 → ... → {city_b}
-3. 单段驾车时长不超过 3.5 小时（210分钟）
-4. 总时间（自驾+游玩）约 8-10 小时
-5. 优先选择顺路的景点
-6. 景点游玩时长已标注
-
-## 输出格式
-返回 JSON：
-{{
-  "selected_pois": [景点ID列表],
-  "route": "城市A → 景点1 → 景点2 → 城市B",
-  "total_drive_time": 总驾车时长（分钟）,
-  "total_play_time": 总游玩时长（小时）,
-  "reasoning": "选择理由"
-}}
-
-只输出 JSON，不要其他内容。
+输出格式（只输出景点ID的JSON数组）：
+[1, 2, 35]
 """
 
-    response = call_llm(prompt, temperature=0.5)
+    result = call_llm(prompt, temperature=0.3)
+    content = result["content"]
+    reasoning = result["reasoning"]
     
-    # 解析 JSON
+    # 解析 JSON（优先从 content，如果为空则从 reasoning 提取）
+    import re
+    text_to_parse = content if content else reasoning
+    
     try:
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', response)
-        if json_match:
-            result = json.loads(json_match.group())
-            
+        selected_ids = []
+        
+        # 方法1: 标准数组格式 [1, 2, 35]
+        array_match = re.search(r'\[\s*\d+(?:\s*,\s*\d+)*\s*\]', text_to_parse)
+        if array_match:
+            selected_ids = json.loads(array_match.group())
+        
+        # 方法2: reasoning 末尾的 "景点：2, 35, 36" 或 "景点: 2, 35, 36"
+        if not selected_ids:
+            poi_match = re.search(r'景点[：:]\s*(\d+(?:\s*[，,]\s*\d+)*)', text_to_parse)
+            if poi_match:
+                ids_str = poi_match.group(1)
+                selected_ids = [int(x) for x in re.findall(r'\d+', ids_str)]
+        
+        # 方法3: reasoning 末尾的 "selected_pois: [2, 35, 36]"
+        if not selected_ids:
+            sp_match = re.search(r'selected_pois[：:]\s*\[?\s*(\d+(?:\s*[，,]\s*\d+)*)\s*\]?', text_to_parse)
+            if sp_match:
+                ids_str = sp_match.group(1)
+                selected_ids = [int(x) for x in re.findall(r'\d+', ids_str)]
+        
+        # 方法4: 完整 JSON 对象
+        if not selected_ids:
+            obj_match = re.search(r'\{[\s\S]*"selected_pois"[\s\S]*?\[[\s\S]*?\][\s\S]*?\}', text_to_parse)
+            if obj_match:
+                try:
+                    parsed = json.loads(obj_match.group())
+                    selected_ids = parsed.get("selected_pois", [])
+                except:
+                    pass
+        
+        # 过滤只保留候选景点ID
+        candidate_ids = [p['id'] for p in poi_info]
+        selected_ids = [i for i in selected_ids if i in candidate_ids]
+        
+        if selected_ids:
             # 补充景点详情
-            selected_ids = result.get("selected_pois", [])
             selected_poi_details = []
             for poi_id in selected_ids:
                 poi = db.query(POI).filter(POI.id == poi_id).first()
@@ -300,19 +323,21 @@ def stage2_plan_daily_route(
                         "duration": poi.duration or 2
                     })
             
+            route_str = f"{city_a} → " + " → ".join([p["name"] for p in selected_poi_details]) + f" → {city_b}"
+            
             return {
                 "day": day_number,
                 "start_city": city_a,
                 "end_city": city_b,
                 "pois": selected_poi_details,
-                "total_drive_time": result.get("total_drive_time", 0),
-                "total_play_time": result.get("total_play_time", 0),
-                "route": result.get("route", f"{city_a} → {city_b}"),
-                "reasoning": result.get("reasoning", "")
+                "total_drive_time": 0,
+                "total_play_time": sum([p["duration"] for p in selected_poi_details]),
+                "route": route_str,
+                "reasoning": ""
             }
     except Exception as e:
         print(f"解析每日路线失败: {e}")
-        print(f"LLM 返回: {response}")
+        print(f"Content: {content[:200] if content else 'empty'}")
     
     # 失败时返回空路线
     return {

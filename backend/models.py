@@ -82,6 +82,23 @@ class TripRoute(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
 
 
+class POICityDistance(Base):
+    """景点到所属城市/县城的距离"""
+    __tablename__ = "poi_city_distances"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    poi_id = Column(Integer, ForeignKey("pois.id"), nullable=False, index=True, comment="景点ID")
+    city = Column(String(50), nullable=False, comment="地级市名称")
+    district = Column(String(50), comment="县/区名称")
+    city_distance = Column(Integer, comment="到地级市中心距离（米）")
+    city_duration = Column(Integer, comment="到地级市中心驾车时长（秒）")
+    district_distance = Column(Integer, comment="到县/区中心距离（米）")
+    district_duration = Column(Integer, comment="到县/区中心驾车时长（秒）")
+    source = Column(String(20), default="amap", comment="数据来源: amap/estimate")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+
+
 class POIDistance(Base):
     """景点间距离缓存表"""
     __tablename__ = "poi_distances"
